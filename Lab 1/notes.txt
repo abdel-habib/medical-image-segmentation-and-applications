@@ -1,0 +1,53 @@
+gaussian vs mixed-gaussian
+
+
+tissue probability map can be obtained from spm tool + tissue segmentation task
+obtain the brain mask to do skull strip
+use t1 for anatomical seg
+upload it in spm and do segmentation
+
+bias correction -> click to obtain bias field, image corrected, and obtain the tissues segmented
+
+
+1. Segment the 3 c
+
+itksnap of the tisue prob ma for the 3 tissues of the , prob of each voxel that belons to each of the 3 clusters
+
+bias corrected image: t1 with the bias correction done -> Obtained directly at the same time when segmenting
+MRI without the skull -> skull stripping, t1 and t2 without the bones --- use the tissue masks 
+
+
+the probability map is the final segmentation
+
+WM, GM, CSF, soft tissue, skull
+
+c1 gray
+c2 white
+c3 csf
+c4 bone
+c5 soft tissue
+
+mt1 is the bias corrected
+
+ImgCalc is used to obtain the union of the 3 clusters 
+
+
+1. Segment and obtain the corrected bias field and the tissue masks
+
+nibabel
+
+((c1xm1) + c2xm1) + c3xm3)
+((i2.*i1) + (i3.*i1)) + (
+
+i1= mt1
+i2= c1t1
+i3= c2t1
+i4= c3t1
+
+m1x(c1+c2+c3)>0.2
+
+
+i1.*((i2+i3+i4)) > 0.2 this includes 3 tissues 
+
+
+compare the label or each tissue with each segmented volume c1:c3
