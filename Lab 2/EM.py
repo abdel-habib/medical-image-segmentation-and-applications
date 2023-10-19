@@ -7,6 +7,7 @@ from scipy.stats import multivariate_normal
 from tqdm import tqdm
 
 from loguru import logger
+import pandas as pd
 
 class NiftiManager:
     def __init__(self) -> None:
@@ -36,7 +37,8 @@ class EM:
         self.NM = NiftiManager()
 
         # Removing the background for the data
-        self.tissue_data    = self.remove_black_bg()    # (456532, 2)
+        self.tissue_data, self.gt_binary, self.img_shape \
+                            = self.remove_black_bg()    # (456532, 2) for tissue data
         self.n_samples      = self.tissue_data.shape[0] # 456532 samples
         self.n_features     = self.tissue_data.shape[1] # number of features 2 or 1 (dimension), based on the number of modalities we pass
 
@@ -45,9 +47,14 @@ class EM:
         self.clusters_covar = np.zeros(((self.K, self.n_features, self.n_features)))    # (3, 2, 2)
         self.alpha_k        = np.ones(self.K)                                           # prior probabilities, (3,)
 
+        self.sum_tolerance  = 0.00001
+
+        self.posteriors     = np.zeros((self.n_samples, self.K), dtype=np.float64)      # (456532, 3)
+        self.pred_labels    = np.zeros((self.n_samples,))                               # (456532,)
+
         # assign the parameters their initial values
         self.initialize_parameters(data=self.tissue_data)
-
+    
     def remove_black_bg(self, labels_gt_file='LabelsForTesting.nii', t1_file='T1.nii', t2_file='T2_FLAIR.nii'):
         '''Removes the black background from the skull stripped volume and returns a 1D array of the voxel intensities \
             of the pixels that falls in the True region of the mask, for GM, WM, and CSF.'''
@@ -60,28 +67,24 @@ class EM:
         t1_volume, _    = self.NM.load_nifti(os.path.join(data_folder_path, t1_file))
         t2_volume, _    = self.NM.load_nifti(os.path.join(data_folder_path, t2_file))
 
-        # Selecting the tissues based on their labels
-        labels_nifti_csf = labels_nifti == 1
-        labels_nifti_gm  = labels_nifti == 2
-        labels_nifti_wm  = labels_nifti == 3
-
-        # Adding the tissues togather to make a single file for the 3 tissues
-        tissue_labels    = labels_nifti_csf + labels_nifti_gm + labels_nifti_wm
-
+        # creating a binary mask from the gt labels
+        labels_binary   = np.where(labels_nifti == 0, 0, 1)
+ 
         # selecting the voxel values from the skull stripped
-        t1_selected_tissue = t1_volume[tissue_labels].flatten()
-        t2_selected_tissue = t2_volume[tissue_labels].flatten()
+        t1_selected_tissue = t1_volume[labels_binary == 1].flatten()
+        t2_selected_tissue = t2_volume[labels_binary == 1].flatten()
 
         # put both tissues into the d-dimensional data vector [[feature_1, feature_2]]
         tissue_data =  np.array([t1_selected_tissue, t2_selected_tissue]).T
+        #tissue_data =  np.array([t1_selected_tissue]).T
 
         # The true mask labels count must equal to the number of voxels we segmented
-        # np.count_nonzero(tissue_labels) returns the sum of pixel values that are True, the count should be equal to the number
+        # np.count_nonzero(labels_binary) returns the sum of pixel values that are True, the count should be equal to the number
         # of pixels in the selected tissue array
-        assert np.count_nonzero(tissue_labels) == t1_selected_tissue.shape[0], 'Error while removing T1 black background.'
-        assert np.count_nonzero(tissue_labels) == t2_selected_tissue.shape[0], 'Error while removing T2_FLAIR black background.'
+        assert np.count_nonzero(labels_binary) == t1_selected_tissue.shape[0], 'Error while removing T1 black background.'
+        assert np.count_nonzero(labels_binary) == t2_selected_tissue.shape[0], 'Error while removing T2_FLAIR black background.'
 
-        return tissue_data
+        return tissue_data, labels_binary, t2_volume.shape
 
     def initialize_parameters(self, data):
         '''Initializes the model parameters and the weights at the beginning of EM algorithm. It returns the initialized parameters.
@@ -112,44 +115,37 @@ class EM:
             self.alpha_k        = np.ones(self.K, dtype=np.float64) / self.K 
 
         # validating alpha condition
-        assert np.sum(self.alpha_k) == 1.0, 'Error in self.alpha_k calculation. Sum of all self.alpha_k elements has to be equal to 1.'
-        
+        assert np.isclose(np.sum(self.alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "initialize_parameters". Sum of all self.alpha_k elements has to be equal to 1.'
+
         logger.info(f"Successfully initialized model parameters using '{self.params_init_type}'.")
 
-
-    def multivariate_gaussian_probability(self, x, mean_k, cov_k, reg=1e-6):
-        '''
-        Compute the multivariate Gaussian probability density function (PDF) for a given data point.
-
-        Args:
-            x (numpy.ndarray): The vector of data points.
-            mean_k (numpy.ndarray): The mean vector.
-            cov_k (numpy.ndarray): The covariance matrix.
-            reg (float): Regularization term to prevent singularity.
-
-        Returns:
-            float: The probability density at the given data point.
-        '''
-
-        # if x.shape[0] != mean_k.shape[0] or x.shape[0] != cov_k.shape[0] or x.shape[0] != cov_k.shape[1]:
-        #     raise ValueError("Dimensions of x, mean, and cov must match.")
-
-        dim = x.shape[1]
-        x_min_mean = x - mean_k
-
-        # Add regularization to the covariance matrix
-        # cov_k += np.eye(cov_k.shape[0]) * reg
-
-        try:
-            inv_cov_k = np.linalg.inv(cov_k)
-        except np.linalg.LinAlgError:
-            # Handle singularity by using the pseudo-inverse
-            inv_cov_k = np.linalg.pinv(cov_k)
-
-        exponent = -0.5 * x_min_mean.T @ inv_cov_k @ x_min_mean
-        denominator = (2 * np.pi) ** (dim / 2) * np.sqrt(np.linalg.det(cov_k))
-
-        return (1 / denominator) * np.exp(exponent)
+    def multivariate_gaussian_probability(self, x, mean_k, cov_k):
+            '''
+            Compute the multivariate Gaussian probability density function (PDF) for a given data point.
+    
+            Args:
+                x (numpy.ndarray): The vector of data points.
+                mean_k (numpy.ndarray): The mean vector.
+                cov_k (numpy.ndarray): The covariance matrix.
+                reg (float): Regularization term to prevent singularity.
+    
+            Returns:
+                float: The probability density at the given data point.
+            '''
+    
+            dim = self.n_features
+            x_min_mean = x - mean_k.T # Nxd
+                
+            try:
+                inv_cov_k = np.linalg.inv(cov_k)
+            except np.linalg.LinAlgError:
+                inv_cov_k = np.linalg.pinv(cov_k) # Handle singularity by using the pseudo-inverse
+    
+            exponent = -0.5 * np.sum((x_min_mean @ inv_cov_k) * x_min_mean, axis=1)
+    
+            denominator = (2 * np.pi) ** (dim / 2) * np.sqrt(np.linalg.det(cov_k))
+    
+            return (1 / denominator) * np.exp(exponent)
 
     def expectation(self):
         '''Expectation step of EM algorithm. The function initializes the probability placeholder on every iteration, then computes \ 
@@ -162,40 +158,87 @@ class EM:
 
         # calculating the normalised posterior probability for every k cluster using multivariate_gaussian_probability
         for k in range(self.K):
-            # TODO: ask for the error here
-            # cluster_prob = self.multivariate_gaussian_probability(
-            #     x=self.tissue_data, 
-            #     mean_k=self.clusters_means[k], 
-            #     cov_k=self.clusters_covar[k]) 
+
+            cluster_prob = self.multivariate_gaussian_probability(
+                 x=self.tissue_data, 
+                 mean_k=self.clusters_means[k], 
+                 cov_k=self.clusters_covar[k]) 
             
-            cluster_prob = multivariate_normal.pdf(
-                x=self.tissue_data, 
-                mean=self.clusters_means[k], 
-                cov=self.clusters_covar[k],
-                allow_singular=True)
-            
+            # cluster_prob = multivariate_normal.pdf(
+            #    x=self.tissue_data, 
+            #    mean=self.clusters_means[k], 
+            #    cov=self.clusters_covar[k],
+            #    allow_singular=True)
+                        
             # updates every k cluster column 
             posteriors[:,k] = cluster_prob * self.alpha_k[k] 
-            
+        
         # normalize the posteriors "membership weights" row by row separately by dividing by the total sum of each row
         posteriors /= np.sum(posteriors, axis=1)[:, np.newaxis]
 
         # the sum of the 3 clusters probabilities should be equal to 1
-        assert np.sum(posteriors[0,]) == 1.0, 'Error with calculating the posterior probabilities "membership weights" for each voxel.'
+        assert np.isclose(np.sum(posteriors[0,]), 1.0, atol=self.sum_tolerance), 'Error with calculating the posterior probabilities "membership weights" for each voxel.'
 
         return posteriors
+    
+    
+    def maximization(self, w_ik, tissue_data):
+        'Maximization M-Step of EM algorithm. '
+
+        # Computing the new means and covariance matrix
+        covariance_matrix = np.zeros(((self.K, self.n_features, self.n_features)))
+        mu_k = np.zeros((self.K, self.n_features))
+        alpha_k = np.ones(self.K)
+
+        for k in range(self.K):
+            # sum of weights for every k
+            N_k = np.sum(w_ik[:, k])
+
+            # Mean 
+            mu_k[k] = np.array([np.sum(w_ik[:, k] * tissue_data[:, i]) / N_k for i in range(self.n_features)]) #TODO: CONFIRM ABOUT THE TRANSPOSE
+            
+            # covariance 
+            x_min_mean = tissue_data-mu_k[k]
+            weighted_diff = w_ik[:, k][:, np.newaxis] * x_min_mean
+            covariance_matrix[k] = np.dot(weighted_diff.T, weighted_diff) / N_k
+
+            # alpha priors
+            alpha_k[k] = N_k / self.n_samples
+
+        # validating alpha condition
+        assert np.isclose(np.sum(alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "maximization". Sum of all self.alpha_k elements has to be equal to 1.'
+
+        return alpha_k, mu_k, covariance_matrix
+    
+    def log_likelihood(self, alpha, w):
+        #return np.log(np.sum(alpha[k] * w[:, k] for k in range(self.K)))
+        return np.sum(np.log(np.sum(alpha[k] * w[:, k] for k in range(self.K))))
+        
 
     def fit(self, n_iterations):
-        '''Main function that excutes the EM algorithm steps'''
+        '''Main function that fits the EM algorithm'''
 
         logger.info(f"Fitting the algorithm with {n_iterations} iterations.")
 
         # iterating as many as n_iterations indicates
-        # TODO: add the convergence condition to stop the iteration
         for i in tqdm(range(n_iterations)):
             
             # E-Step
-            posteriors = self.expectation()
+            self.posteriors = self.expectation()
+            
+            # likelihood = self.log_likelihood(self.alpha_k, self.posteriors)
+            # print(likelihood)
+            
+            # M Step
+            self.alpha_k, self.clusters_means, self.clusters_covar = self.maximization(self.posteriors, self.tissue_data)
+            
+        predictions = np.argmax(self.posteriors,axis=1) +1
+        #print(pd.DataFrame(predictions).value_counts())
+        gt = self.gt_binary.flatten()
+        gt[gt == 1] = predictions
+        segmentation_result = gt.reshape(self.img_shape)
+        
+        self.NM.show_nifti(segmentation_result, 24)
 
 
 if __name__ == '__main__':
@@ -205,4 +248,4 @@ if __name__ == '__main__':
         params_init_type='kmeans'
     )
 
-    algorithm.fit(n_iterations=1)
+    algorithm.fit(n_iterations=20)
