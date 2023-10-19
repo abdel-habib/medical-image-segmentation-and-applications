@@ -98,8 +98,8 @@ class EM:
             cluster_labels      = kmeans.fit_predict(data)  # labels : ndarray of shape (456532,) Index of the cluster each sample belongs to.
             centroids           = kmeans.cluster_centers_   # (3, 2)
         else:  # 'random' initialization
-            random_centroids    = np.random.randint(np.min(data), np.max(data), size=(self.K, data.shape[1])) # shape (3,2)
-            random_label        = np.random.randint(low=0, high=self.K, size=data.shape[0]) # (456532,)
+            random_centroids    = np.random.randint(np.min(data), np.max(data), size=(self.K, self.n_features)) # shape (3,2)
+            random_label        = np.random.randint(low=0, high=self.K, size=self.n_samples) # (456532,)
 
         cluster_data            = [data[cluster_labels == i] for i in range(self.K)] if self.params_init_type == 'kmeans' \
                                     else [data[random_label == i] for i in range(self.K)]
@@ -107,12 +107,7 @@ class EM:
         # update model parameters (mean and covar)
         self.clusters_means     = centroids if self.params_init_type == 'kmeans' else random_centroids
         self.clusters_covar     = np.array([np.cov(cluster_data[i], rowvar=False) for i in range(self.K)]) # (3, 2, 2)
-
-        # Update self.alpha_k
-        if self.params_init_type == 'kmeans': # has to calculate the values based on the each cluser and its value to the label computed, can't randomly init
-            self.alpha_k        = np.array([np.mean(cluster_labels == i) for i in range(self.K)])
-        else: # 'random' initialization, init with [1/3, 1/3, 1/3]
-            self.alpha_k        = np.ones(self.K, dtype=np.float64) / self.K 
+        self.alpha_k            = np.ones(self.K, dtype=np.float64) / self.K 
 
         # validating alpha condition
         assert np.isclose(np.sum(self.alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "initialize_parameters". Sum of all self.alpha_k elements has to be equal to 1.'
@@ -124,10 +119,9 @@ class EM:
             Compute the multivariate Gaussian probability density function (PDF) for a given data point.
     
             Args:
-                x (numpy.ndarray): The vector of data points.
-                mean_k (numpy.ndarray): The mean vector.
-                cov_k (numpy.ndarray): The covariance matrix.
-                reg (float): Regularization term to prevent singularity.
+                x (numpy.ndarray): The data points.
+                mean_k (numpy.ndarray): The mean vector for cluster K.
+                cov_k (numpy.ndarray): The covariance matrix for cluster K.
     
             Returns:
                 float: The probability density at the given data point.
@@ -183,7 +177,8 @@ class EM:
     
     
     def maximization(self, w_ik, tissue_data):
-        'Maximization M-Step of EM algorithm. '
+        '''Maximization M-Step of EM algorithm. The function updates the model parameters (mean and covariance matrix) as well as updates the \
+            weights (alphas) for every cluster.'''
 
         # Computing the new means and covariance matrix
         covariance_matrix = np.zeros(((self.K, self.n_features, self.n_features)))
@@ -231,13 +226,14 @@ class EM:
             
             # M Step
             self.alpha_k, self.clusters_means, self.clusters_covar = self.maximization(self.posteriors, self.tissue_data)
-            
+
+        # creating a segmentation result with the predictions
         predictions = np.argmax(self.posteriors,axis=1) +1
-        #print(pd.DataFrame(predictions).value_counts())
         gt = self.gt_binary.flatten()
         gt[gt == 1] = predictions
         segmentation_result = gt.reshape(self.img_shape)
         
+        # displaying the segmentation results
         self.NM.show_nifti(segmentation_result, 24)
 
 
@@ -248,4 +244,4 @@ if __name__ == '__main__':
         params_init_type='kmeans'
     )
 
-    algorithm.fit(n_iterations=20)
+    algorithm.fit(n_iterations=10)
