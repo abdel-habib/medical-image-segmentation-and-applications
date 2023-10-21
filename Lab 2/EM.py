@@ -75,8 +75,8 @@ class EM:
         t2_selected_tissue = t2_volume[labels_binary == 1].flatten()
 
         # put both tissues into the d-dimensional data vector [[feature_1, feature_2]]
-        tissue_data =  np.array([t1_selected_tissue, t2_selected_tissue]).T
-        #tissue_data =  np.array([t1_selected_tissue]).T
+        # tissue_data =  np.array([t1_selected_tissue, t2_selected_tissue]).T     # multi-modality
+        tissue_data =  np.array([t1_selected_tissue]).T                       # single modality
 
         # The true mask labels count must equal to the number of voxels we segmented
         # np.count_nonzero(labels_binary) returns the sum of pixel values that are True, the count should be equal to the number
@@ -116,7 +116,9 @@ class EM:
 
     def multivariate_gaussian_probability(self, x, mean_k, cov_k):
             '''
-            Compute the multivariate Gaussian probability density function (PDF) for a given data point.
+            Compute the multivariate and single variate gaussian probability density function (PDF) for a given data data.
+            The function can handle single or multi-modality (dimensions) and computes the probability on all of the 
+            data without a complex iteratitve matrix multiplication.
     
             Args:
                 x (numpy.ndarray): The data points.
@@ -129,15 +131,27 @@ class EM:
     
             dim = self.n_features
             x_min_mean = x - mean_k.T # Nxd
+            
+            if dim == 1 and cov_k.shape == (): # single modality
+                # the covariance matrix is a scalar value, thus the inverse is 1 / scalar value
+                inv_cov_k = 1 / cov_k
+
+                # to not change the multiplication formula below, we convert it to a (1,1) matrix
+                inv_cov_k = np.array([[inv_cov_k.copy()]])
                 
-            try:
-                inv_cov_k = np.linalg.inv(cov_k)
-            except np.linalg.LinAlgError:
-                inv_cov_k = np.linalg.pinv(cov_k) # Handle singularity by using the pseudo-inverse
+                # the determinant is only used for square matrices, for a scalar value, det(a) = a
+                determinant = cov_k
+
+            else: # multi-modality
+                try:
+                    inv_cov_k = np.linalg.inv(cov_k)
+                except np.linalg.LinAlgError:
+                    inv_cov_k = np.linalg.pinv(cov_k) # Handle singularity by using the pseudo-inverse
+
+                determinant = np.linalg.det(cov_k)
     
             exponent = -0.5 * np.sum((x_min_mean @ inv_cov_k) * x_min_mean, axis=1)
-    
-            denominator = (2 * np.pi) ** (dim / 2) * np.sqrt(np.linalg.det(cov_k))
+            denominator = (2 * np.pi) ** (dim / 2) * np.sqrt(determinant)
     
             return (1 / denominator) * np.exp(exponent)
 
@@ -163,7 +177,7 @@ class EM:
             #    mean=self.clusters_means[k], 
             #    cov=self.clusters_covar[k],
             #    allow_singular=True)
-                        
+                                    
             # updates every k cluster column 
             posteriors[:,k] = cluster_prob * self.alpha_k[k] 
         
@@ -174,7 +188,6 @@ class EM:
         assert np.isclose(np.sum(posteriors[0,]), 1.0, atol=self.sum_tolerance), 'Error with calculating the posterior probabilities "membership weights" for each voxel.'
 
         return posteriors
-    
     
     def maximization(self, w_ik, tissue_data):
         '''Maximization M-Step of EM algorithm. The function updates the model parameters (mean and covariance matrix) as well as updates the \
@@ -228,7 +241,7 @@ class EM:
             self.alpha_k, self.clusters_means, self.clusters_covar = self.maximization(self.posteriors, self.tissue_data)
 
         # creating a segmentation result with the predictions
-        predictions = np.argmax(self.posteriors,axis=1) +1
+        predictions = np.argmax(self.posteriors,axis=1) + 1
         gt = self.gt_binary.flatten()
         gt[gt == 1] = predictions
         segmentation_result = gt.reshape(self.img_shape)
