@@ -174,7 +174,7 @@ class EM:
 
         logger.info(f"Successfully initialized model parameters using '{self.params_init_type}'.")
 
-    def multivariate_gaussian_probability(self, x, mean_k, cov_k, regularization=1e-6):
+    def multivariate_gaussian_probability(self, x, mean_k, cov_k, regularization=1e-4):
             '''
             Compute the multivariate and single variate gaussian probability density function (PDF) for a given data data.
             The function can handle single or multi-modality (dimensions) and computes the probability on all of the 
