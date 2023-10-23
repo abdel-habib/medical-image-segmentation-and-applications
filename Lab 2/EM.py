@@ -193,6 +193,7 @@ class EM:
             x_min_mean = x - mean_k.T # Nxd
             
             if dim == 1 and cov_k.shape == (): # single modality
+
                 # to handle nan cov_k and inversion in certain cases (mainly when randomly initializing)     
                 # we add a small regularisation term to enable the inverse and not to have nan in the final
                 # matrix           
@@ -330,6 +331,7 @@ class EM:
                     3:1,
                 }
             }
+            
         elif dim == 2:
             labels_dict = {
                 #id
