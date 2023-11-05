@@ -9,6 +9,13 @@ from tqdm import tqdm
 from loguru import logger
 import pandas as pd
 
+class FileManager:
+    def __init__(self) -> None:
+        pass
+
+    def check_file_existence(self, file, description):
+        if file is None:
+            raise ValueError(f"Please check if the {description} file passed exists in the specified directory")
 class NiftiManager:
     def __init__(self) -> None:
         pass
@@ -72,11 +79,12 @@ class Evaluate:
         return dice
 
 class EM:
-    def __init__(self, subject_id, K=3, params_init_type='random', modality='multi'):
-        self.subject_id         = subject_id
+    def __init__(self, K=3, params_init_type='random', modality='multi'):
         self.K                  = K
         self.params_init_type   = params_init_type
         self.modality           = modality
+
+        self.labels_gt_file, self.t1_path, self.t2_path = None, None, None
 
         self.sum_tolerance          = 1e-3
         self.convergence_tolerance  = 200
@@ -87,60 +95,89 @@ class EM:
 
         # Nifti Manager class
         self.NM = NiftiManager()
+        self.FM = FileManager()
 
+        self.tissue_data, self.gt_binary, self.img_shape = None, None, None      # (N, d) for tissue data
+
+        self.n_samples      = None      # N samples
+        self.n_features     = None      # d = number of features 2 or 1 (dimension), 
+                                        # based on the number of modalities we pass
+
+        # create parameters objects
+        self.clusters_means = None     # (K, d)
+        self.clusters_covar = None     # (K, d, d)
+        self.alpha_k        = None     # prior probabilities, (K,)
+
+        self.posteriors     = None     # (N, K)
+        self.pred_labels    = None     # (N,)
+        self.loglikelihood  = [-np.inf]
+
+    def initialize_for_fit(self, labels_gt_file, t1_path, t2_path):
+        '''Initialize variables only when fitting the algorithm.'''
+        # initializing skull stripping variables
+        self.labels_gt_file, self.t1_path, self.t2_path \
+            = labels_gt_file, t1_path, t2_path
+        
         # Removing the background for the data
         self.tissue_data, self.gt_binary, self.img_shape \
-                            = self.perform_skull_stripping()    # (456532, 2) for tissue data
+                            = self.perform_skull_stripping(
+                                self.labels_gt_file,
+                                t1_path=self.t1_path,
+                                t2_path=self.t2_path
+                            )    # (N, d) for tissue data
+        
         self.n_samples      = self.tissue_data.shape[0] # 456532 samples
         self.n_features     = self.tissue_data.shape[1] # number of features 2 or 1 (dimension), based on the number of modalities we pass
 
-        # create parameters objects
         self.clusters_means = np.zeros((self.K, self.n_features))                       # (3, 2)
         self.clusters_covar = np.zeros(((self.K, self.n_features, self.n_features)))    # (3, 2, 2)
         self.alpha_k        = np.ones(self.K)                                           # prior probabilities, (3,)
 
         self.posteriors     = np.zeros((self.n_samples, self.K), dtype=np.float64)      # (456532, 3)
         self.pred_labels    = np.zeros((self.n_samples,))                               # (456532,)
-        self.loglikelihood  = [-np.inf]
 
         if self.modality not in ['single', 'multi']:
             raise ValueError('Wronge modality type passed. Only supports "single" or "multi" options.')
 
-        # assign the parameters their initial values
+        # assign model parameters their initial values
         self.initialize_parameters(data=self.tissue_data)
     
-    def perform_skull_stripping(self, labels_gt_file='LabelsForTesting.nii', t1_file='T1.nii', t2_file='T2_FLAIR.nii'):
+    def perform_skull_stripping(self, labels_gt_file, t1_path, t2_path):
         '''Removes the black background from the skull stripped volume and returns a 1D array of the voxel intensities \
             of the pixels that falls in the True region of the mask, for GM, WM, and CSF.'''
         
-        # selecting paths
-        data_folder_path    = os.path.join(os.getcwd(), f'../Lab 1/P2_data/{self.subject_id}')
+        # Check if files passed
+        self.FM.check_file_existence(labels_gt_file, "labels")
+        self.FM.check_file_existence(t1_path, "T1")
 
-        # load the nifti files
-        labels_nifti, _ = self.NM.load_nifti(os.path.join(data_folder_path, labels_gt_file))
-        t1_volume, _    = self.NM.load_nifti(os.path.join(data_folder_path, t1_file))
-        t2_volume, _    = self.NM.load_nifti(os.path.join(data_folder_path, t2_file))
-
-        # creating a binary mask from the gt labels
+        # load the nifti files & creating a binary mask from the gt labels
+        labels_nifti, _ = self.NM.load_nifti(labels_gt_file)
         labels_binary   = np.where(labels_nifti == 0, 0, 1)
- 
-        # selecting the voxel values from the skull stripped
-        t1_selected_tissue = t1_volume[labels_binary == 1].flatten()
-        t2_selected_tissue = t2_volume[labels_binary == 1].flatten()
 
-        # put both tissues into the d-dimensional data vector [[feature_1, feature_2]]
-        if self.modality == 'multi':
-            tissue_data =  np.array([t1_selected_tissue, t2_selected_tissue]).T     # multi-modality
-        else:
-            tissue_data =  np.array([t1_selected_tissue]).T                       # single modality
+        # loading the volumes and performing skull stripping 
+        t1_volume, _    = self.NM.load_nifti(t1_path)
+        t1_selected_tissue = t1_volume[labels_binary == 1].flatten()
 
         # The true mask labels count must equal to the number of voxels we segmented
         # np.count_nonzero(labels_binary) returns the sum of pixel values that are True, the count should be equal to the number
         # of pixels in the selected tissue array
         assert np.count_nonzero(labels_binary) == t1_selected_tissue.shape[0], 'Error while removing T1 black background.'
-        assert np.count_nonzero(labels_binary) == t2_selected_tissue.shape[0], 'Error while removing T2_FLAIR black background.'
 
-        return tissue_data, labels_binary, t2_volume.shape
+        # put both tissues into the d-dimensional data vector [[feature_1, feature_2]]
+        if self.modality == 'multi':
+            self.FM.check_file_existence(t2_path, "T2")
+
+            # loading the volumes and performing skull stripping 
+            t2_volume, _    = self.NM.load_nifti(t2_path)
+            t2_selected_tissue = t2_volume[labels_binary == 1].flatten()
+
+            assert np.count_nonzero(labels_binary) == t2_selected_tissue.shape[0], 'Error while removing T2_FLAIR black background.'
+
+            tissue_data =  np.array([t1_selected_tissue, t2_selected_tissue]).T     # multi-modality
+        else:
+            tissue_data =  np.array([t1_selected_tissue]).T                       # single modality
+
+        return tissue_data, labels_binary, t1_volume.shape
 
     def initialize_parameters(self, data):
         '''Initializes the model parameters and the weights at the beginning of EM algorithm. It returns the initialized parameters.
@@ -156,10 +193,12 @@ class EM:
             kmeans              = KMeans(n_clusters=self.K, random_state=self.seed, n_init='auto', init='k-means++').fit(data)
             cluster_labels      = kmeans.labels_                # labels : ndarray of shape (456532,)
             centroids           = kmeans.cluster_centers_       # (3, 2)
+            self.alpha_k        = np.array([np.sum([cluster_labels == i]) / len(cluster_labels) for i in range(self.K)]) # ratio for each cluster
 
         else:  # 'random' initialization
             random_centroids    = np.random.randint(np.min(data), np.max(data), size=(self.K, self.n_features)) # shape (3,2)
             random_label        = np.random.randint(low=0, high=self.K, size=self.n_samples) # (456532,)
+            self.alpha_k        = np.ones(self.K, dtype=np.float64) / self.K 
 
         cluster_data            = [data[cluster_labels == i] for i in range(self.K)] if self.params_init_type == 'kmeans' \
                                     else [data[random_label == i] for i in range(self.K)]
@@ -167,7 +206,6 @@ class EM:
         # update model parameters (mean and covar)
         self.clusters_means     = centroids if self.params_init_type == 'kmeans' else random_centroids
         self.clusters_covar     = np.array([np.cov(cluster_data[i], rowvar=False) for i in range(self.K)]) # (3, 2, 2)
-        self.alpha_k            = np.ones(self.K, dtype=np.float64) / self.K 
 
         # validating alpha condition
         assert np.isclose(np.sum(self.alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "initialize_parameters". Sum of all self.alpha_k elements has to be equal to 1.'
@@ -280,7 +318,7 @@ class EM:
             # covariance 
             x_min_mean = tissue_data-mu_k[k]
             weighted_diff = w_ik[:, k][:, np.newaxis] * x_min_mean
-            covariance_matrix[k] = np.dot(weighted_diff.T, weighted_diff) / N_k
+            covariance_matrix[k] = np.dot(weighted_diff.T, x_min_mean) / N_k
 
             # alpha priors
             alpha_k[k] = N_k / self.n_samples
@@ -294,88 +332,62 @@ class EM:
         # return np.sum(np.log(np.sum(alpha[k] * w[i, k] for i in range(self.n_samples) for k in range(self.K))))
         return np.sum(np.log(np.sum(alpha[k] * w[:, k] for k in range(self.K))))
 
-    def correct_pred_labels(self, pred_vol, subject_id, dim):
-        '''Maps the pixel values of the prediction volume that matches the prediction labels to the gt labels values. This function mainly depends on this application of 5 subjects,
-        and won't correct the labels as expected for any other volume. Note that it is not a necessary step, but for easier visualization and evaluation, it is useful to correct and 
-        match the labels.'''
-        logger.warning("\n `correct_pred_labels` function modifies the labels based on prior knowledge for only the 5 subjects, and not standardised to all brain tissue segmentation \n mask labels. It is not mandatory to correct the prediction labels, as it is implemented for this specific task and it is performed on the segmented result of the algorithm. \nTo hide this warning and not correct the labels, set `correct_labels` to False while fitting.")
+    def generate_segmentation(self, posteriors, gt_binary):
+        predictions = np.argmax(posteriors, axis=1) + 1
+        gt = gt_binary
+        gt[gt == 1] = predictions
+        
+        return gt.reshape(self.img_shape)
+    
+    def correct_pred_labels(self, segmentation_result, gt_binary):
+        '''Maps the pixel values of the prediction volume that matches the prediction labels to the gt labels values. This is based on prior knowledge 
+        of the correct labl for each cluster, known from a ground truth label volume.
+        
+        Arguments:
+            - segmentation_result (np.array): segmentation volume resulted from the algorithm
+            - gt_binary (np.array): binarized ans flattened volume for the segmented volume, the label/ground truth.
 
-        # used to map from pred labels to gt labels for the 3 tissues
-        if dim == 1:
-            labels_dict = {
-                #id
-                1:{
-                    #gt:pred
-                    1:1,        #csf
-                    2:2,        #gm
-                    3:3,        #wm
-                },
-                2:{
-                    1:2,
-                    2:3,
-                    3:1,
-                },
-                3:{
-                    1:3,
-                    2:1,
-                    3:2,
-                },
-                4:{
-                    1:1,
-                    2:3,
-                    3:2,
-                },
-                5:{
-                    1:2,
-                    2:3,
-                    3:1,
-                }
-            }
-            
-        elif dim == 2:
-            labels_dict = {
-                #id
-                1:{
-                    #gt:pred
-                    1:1,        #csf
-                    2:3,        #gm
-                    3:2,        #wm
-                },
-                2:{
-                    1:2,
-                    2:3,
-                    3:1,
-                },
-                3:{
-                    1:2,
-                    2:1,
-                    3:3,
-                },
-                4:{
-                    1:1,
-                    2:3,
-                    3:2,
-                },
-                5:{
-                    1:3,
-                    2:2,
-                    3:1,
-                }
-            }
+        Returns:
+            - corrected_segmentation (np.array): segmentation volume with the corrected label for each cluster.
+        '''
+        means = np.mean(self.clusters_means, axis=1)
 
-        corrected_vol = np.zeros(pred_vol.shape)
+        # this is based on prior knowledge, the RHS are the corrected labels
+        # assuming that CSF=1 (lowest mean), GM=2, and WM=3(highest mean)
+        
+        # labels for lab 1, where ing gt: CSF=1, GM=2, and CSF=3
+        # highest_mean = np.argmax(means) + 1
+        # lowest_mean  = np.argmin(means) + 1
+        # middle_mean  = len(means) - highest_mean - lowest_mean + 3
+        # labels = {
+        #     np.argmax(means) + 1: 3, 
+        #     len(means) - np.argmax(means) - np.argmin(means) + 1: 2, 
+        #     np.argmin(means) + 1: 1}
+        
+        # labels for lab 3, where ing gt: CSF=1, WM=2, and GM=3
+        # the max is wm k=2, we correct it to gm
+        labels = {
+            np.argmax(means) + 1: 2,  # highest mean is csf in the new dataset of lab 3
+            len(means) - np.argmax(means) - np.argmin(means) + 1: 3,  # middle mean is wm, label 2
+            np.argmin(means) + 1: 1}
+                
+        # Modify the labels based on means
+        flattened_result = segmentation_result.flatten()
+        for mean_index, label_corrected in labels.items():
+            gt_binary[flattened_result == mean_index] = label_corrected
 
-        # Loop through the labels_dict to map and update the labels in the predicted volume
-        for key, value in labels_dict[subject_id].items():
-            corrected_vol[pred_vol == value] = key
+        corrected_segmentation = gt_binary.reshape(self.img_shape)
 
-        return corrected_vol
+        return corrected_segmentation
 
-    def fit(self, n_iterations, correct_labels=True):
+    def fit(self, n_iterations, labels_gt_file, t1_path, t2_path = None ,correct_labels=True):
         '''Main function that fits the EM algorithm'''
 
         logger.info(f"Fitting the algorithm with {n_iterations} iterations.")
 
+        # Initialize parameters for fitting
+        self.initialize_for_fit(labels_gt_file, t1_path, t2_path)
+        
         current_idx         = 0
 
         while (current_idx <= n_iterations):
@@ -399,9 +411,8 @@ class EM:
         logger.info(f"Iterations performed: {current_idx-1}. Displaying the segmentation result..")
 
         # creating a segmentation result with the predictions
-        predictions = np.argmax(self.posteriors, axis=1) + 1
-        gt = self.gt_binary.flatten()
-        gt[gt == 1] = predictions
-        segmentation_result = gt.reshape(self.img_shape)
+        segmentation_result = self.generate_segmentation(
+            posteriors=self.posteriors, 
+            gt_binary=self.gt_binary.flatten())
         
-        return self.correct_pred_labels(segmentation_result, self.subject_id, self.n_features) if correct_labels else segmentation_result
+        return self.correct_pred_labels(segmentation_result, self.gt_binary.flatten()) if correct_labels else segmentation_result

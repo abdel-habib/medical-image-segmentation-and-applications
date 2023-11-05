@@ -42,16 +42,77 @@ class NiftiManager:
         plt.colorbar()
         plt.show()
 
-    def normalize_nifti(self, volume):
-        '''Performs Min-Max scaling normalization on nifti volumes.'''
-        # Calculate the minimum and maximum values of the volume
-        min_val = np.min(volume)
-        max_val = np.max(volume)
+    def show_mean_volumes(self, mean_csf, mean_wm, mean_gm, slices=[128], export=False, filename=None):
+        '''Displays the mean volumes for CSF, WM, and GM for a list of slices.'''
+        num_slices = len(slices)
+        
+        plt.figure(figsize=(20, 7 * num_slices))
 
-        # Perform min-max scaling normalization
-        normalized_volume = (volume - min_val) / (max_val - min_val)
+        for i, slice in enumerate(slices):
+            plt.subplot(num_slices, 3, i * 3 + 1)
+            plt.imshow(mean_csf[:, :, slice], cmap='gray')
+            plt.title(f'Average CSF Volume - Slice {slice}')
+            # plt.colorbar()
+            plt.axis('off')
 
-        return normalized_volume
+            plt.subplot(num_slices, 3, i * 3 + 2)
+            plt.imshow(mean_wm[:, :, slice], cmap='gray')
+            plt.title(f'Average WM Volume - Slice {slice}')
+            # plt.colorbar()
+            plt.axis('off')
+
+            plt.subplot(num_slices, 3, i * 3 + 3)
+            plt.imshow(mean_gm[:, :, slice], cmap='gray')
+            plt.title(f'Average GM Volume - Slice {slice}')
+            # plt.colorbar()
+            plt.axis('off')
+
+        if export and filename:
+            plt.savefig(filename)
+            
+        plt.show()
+
+    def show_combined_mean_volumes(self, mean_csf, mean_wm, mean_gm, slice_to_display=128, export=False, filename=None):
+        # Stack the mean volumes along the fourth axis to create a single 4D array
+        combined_mean_volumes = np.stack((mean_csf, mean_wm, mean_gm), axis=3)
+    
+        # Choose the channel you want to display (0 for CSF, 1 for WM, 2 for GM)
+        channel_to_display = 0  # Adjust as needed
+    
+        # Display the selected channel
+        plt.imshow(combined_mean_volumes[:, :, :, :][:, :, slice_to_display]) # [:, :, :, channel_to_display]
+        plt.axis('off')  # Turn off axis labels
+        plt.title(f'Combined Averaged Volumes at Slice {slice_to_display}')  # Add a title
+
+        if export and filename:
+            plt.savefig(filename)
+            
+        plt.show()
+
+    def min_max_normalization(self, image, max_value):
+        # Ensure the image is a NumPy array for efficient calculations
+        image = np.array(image)
+        
+        # Calculate the minimum and maximum pixel values
+        min_value = np.min(image)
+        max_actual = np.max(image)
+        
+        # Perform min-max normalization
+        normalized_image = (image - min_value) / (max_actual - min_value) * max_value
+        
+        return normalized_image
+
+    def export_nifti(self, volume, export_path):
+        '''Exports nifti volume to a given path.
+        '''
+        
+        # Create a NIfTI image from the NumPy array
+        # np.eye(4): Identity affine transformation matrix, it essentially assumes that the images are in the same orientation and position 
+        # as the original images
+        img = nib.Nifti1Image(volume, np.eye(4))
+
+        # Save the NIfTI image
+        nib.save(img, str(export_path))
 
 class Evaluate:
     def __init__(self) -> None:
@@ -280,7 +341,7 @@ class EM:
             # covariance 
             x_min_mean = tissue_data-mu_k[k]
             weighted_diff = w_ik[:, k][:, np.newaxis] * x_min_mean
-            covariance_matrix[k] = np.dot(weighted_diff.T, weighted_diff) / N_k
+            covariance_matrix[k] = np.dot(weighted_diff.T, x_min_mean) / N_k
 
             # alpha priors
             alpha_k[k] = N_k / self.n_samples
