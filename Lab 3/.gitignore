@@ -2,3 +2,4 @@
 
 atlas_outputs/*
 !atlas_outputs/.gitkeep
+output/*
