@@ -16,6 +16,7 @@ class FileManager:
     def check_file_existence(self, file, description):
         if file is None:
             raise ValueError(f"Please check if the {description} file passed exists in the specified directory")
+
 class NiftiManager:
     def __init__(self) -> None:
         pass
@@ -84,7 +85,7 @@ class NiftiManager:
         combined_mean_volumes = np.stack((mean_csf, mean_wm, mean_gm), axis=3)
     
         # Choose the channel you want to display (0 for CSF, 1 for WM, 2 for GM)
-        channel_to_display = 0  # Adjust as needed
+        # channel_to_display = 0  # Adjust as needed
     
         # Display the selected channel
         plt.imshow(combined_mean_volumes[:, :, :, :][:, :, slice_to_display]) # [:, :, :, channel_to_display]
@@ -148,21 +149,40 @@ class BrainAtlasManager:
         Task (1.1) Tissue models: segmentation using just intensity information.
 
         Args:
-            - image (np.array): a normalized [0, 255] test intensity image to segment.
-            - tissue_map_csv (csv): a csf file name that contains the tissue maps probabilities 
+            image ('np.array'):
+                A normalized [0, 255] and skull stripped intensity volume for the brain in the form of a numpy array. 
+                This is the required volume to be segmented.
+
+            tissue_map_csv ('Path'): 
+                A csf file path that contains the tissue maps probabilities. The file should contain three columns, 
+                first column for CSF, then WM, then GM.
+
+        Returns:
+            The segmented volume in the same shape of the passed intensity volume. The output is given in labels for 
+            the segmentation, where label 0 is for background, 1 for CSF, 2 for WM, and 3 for GM. Those labels changes
+            based on the tissue map columns orders. The final atlas probability has a shape of (N, K), where N is the 
+            number of samples, and K is the number of clusters.
+
+            segmentation_result ('np.array'):
+                The segmentation label image in the form of numpy array.
+
+            tissue_map_array ('np.array'):
+                An array that represents the final atlas probabilities. 
         '''
         # read the tissues moodels
         tissue_map_df = pd.read_csv(tissue_map_csv, header=None)
         tissue_map_array = tissue_map_df.values
 
+        # map background pixels above 100 to WM (label 2)
+        # we need to select the second column for the csf. If the order for the columns and tissues
+        # are different from the one defined in the comments, the column index has to be modified
+        # csf is in column 1
+        bg_mask = np.arange(len(tissue_map_array)) > 100
+        tissue_map_array[bg_mask, 1] = 2
+
         # obtain the argmax to know to which cluster each row (histogram pin - 0:255) falls into
         tissue_map_array_argmax = np.argmax(tissue_map_array, axis=1) + 1
         
-        # convert bg pixels above 100 to wm
-        # the threshold of 100 is observed from the probabilistic tissue map
-        bg_mask = np.arange(len(tissue_map_array_argmax)) > 100
-        tissue_map_array_argmax[bg_mask] = 2
-
         # create a black image as a template for the segmentation to fill
         segmentation_result =  np.zeros_like(image)
 
@@ -176,15 +196,31 @@ class BrainAtlasManager:
             # we update the zeros template with the label value that we obtained from argmax 
             segmentation_result[condition] = value
 
-        return segmentation_result
+        return segmentation_result, tissue_map_array
     
     def segment_using_tissue_atlas(self, image, *atlases):
         '''
         Task (1.2) Label propagation: segmentation using just position information using atlases
 
         Args:
-            - image (np.array): a normalized [0, 255] and skull stripped intensity image to segment.
-            - atlases (np.arrays): atlases for CSF, WM, and GM as in order.
+            image ('np.array'):
+                A normalized [0, 255] and skull stripped intensity volume for the brain in the form of a numpy array. 
+                This is the required volume to be segmented. 
+
+            atlases ('np.arrays'): 
+                            atlases nifti data files for CSF, WM, and GM as in order.        
+        
+        Returns:
+            The segmented volume in the same shape of the passed intensity volume. The output is given in labels for 
+            the segmentation, where label 0 is for background, 1 for CSF, 2 for WM, and 3 for GM. Those labels changes
+            based on the tissue map columns orders. The final atlas probability has a shape of (N, K), where N is the 
+            number of samples, and K is the number of clusters.
+
+            segmentation_result ('np.array'):
+                The segmentation label image in the form of numpy array.
+
+            concatenated_atlas ('np.array'):
+                An array that represents the final atlas probabilities. 
         '''
 
         # get the atlases
@@ -210,19 +246,46 @@ class BrainAtlasManager:
         # Reshape the segmented image to its original shape if needed
         segmented_image = segmented_image.reshape(image.shape)
 
-        return segmented_image
+        return segmented_image, concatenated_atlas
     
     def segment_using_tissue_models_and_atlas(self, image, tissue_map_csv, *atlases):
         '''(1.3) Tissue models & label propagation: multiplying both results: segmentation using intensity & position information
 
         Args:
-            - image (np.array): a normalized [0, 255] and skull stripped intensity image to segment.
-            - tissue_map_csv (csv): a csf file name that contains the tissue maps probabilities 
-            - atlases (np.arrays): atlases for CSF, WM, and GM as in order.
+            image ('np.array'):
+                A normalized [0, 255] and skull stripped intensity volume for the brain in the form of a numpy array. 
+                This is the required volume to be segmented.
+
+            tissue_map_csv ('Path'): 
+                A csf file path that contains the tissue maps probabilities. The file should contain three columns, 
+                first column for CSF, then WM, then GM.
+            
+            atlases ('np.arrays'): 
+                atlases nifti data files for CSF, WM, and GM as in order.
+
+        Returns:
+            The segmented volume in the same shape of the passed intensity volume. The output is given in labels for 
+            the segmentation, where label 0 is for background, 1 for CSF, 2 for WM, and 3 for GM. Those labels changes
+            based on the tissue map columns orders. The final atlas probability has a shape of (N, K), where N is the 
+            number of samples, and K is the number of clusters.
+
+            segmentation_result ('np.array'):
+                The segmentation label image in the form of numpy array.
+
+            posteriors ('np.array'):
+                An array that represents the final atlas probabilities. 
+
         '''
         # read the tissues moodels
         tissue_map_df = pd.read_csv(tissue_map_csv, header=None)
         tissue_map_array = tissue_map_df.values
+
+        # map background pixels above 100 to WM (label 2)
+        # we need to select the second column for the csf. If the order for the columns and tissues
+        # are different from the one defined in the comments, the column index has to be modified
+        # csf is in column 1
+        bg_mask = np.arange(len(tissue_map_array)) > 100
+        tissue_map_array[bg_mask, 1] = 2
 
         # get the atlases
         atlas_csf = atlases[0]
@@ -253,7 +316,7 @@ class BrainAtlasManager:
         # Reshape the segmented image to its original shape if needed
         segmented_image = segmented_image.reshape(image.shape)
 
-        return segmented_image
+        return segmented_image, posteriors
 
 class EM:
     def __init__(self, K=3, params_init_type='random', modality='multi'):
@@ -279,7 +342,7 @@ class EM:
         self.tissue_data, self.gt_binary, self.img_shape = None, None, None      # (N, d) for tissue data
 
         self.n_samples      = None      # N samples
-        self.n_features     = None      # d = number of features 2 or 1 (dimension), 
+        self.n_features     = None      # d = number of features (dimension), 
                                         # based on the number of modalities we pass
 
         # create parameters objects
@@ -290,6 +353,9 @@ class EM:
         self.posteriors     = None     # (N, K)
         self.pred_labels    = None     # (N,)
         self.loglikelihood  = [-np.inf]
+
+        # atlas parameters
+        self.atlas_prob     = None      # (N, K)
 
     def initialize_for_fit(self, labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, *atlases):
         '''Initialize variables only when fitting the algorithm.'''
@@ -311,15 +377,17 @@ class EM:
                                 t2_path=self.t2_path
                             )    # (N, d) for tissue data
         
-        self.n_samples      = self.tissue_data.shape[0] # 456532 samples
+        self.n_samples      = self.tissue_data.shape[0] # N samples
         self.n_features     = self.tissue_data.shape[1] # number of features 2 or 1 (dimension), based on the number of modalities we pass
 
-        self.clusters_means = np.zeros((self.K, self.n_features))                       # (3, 2)
-        self.clusters_covar = np.zeros(((self.K, self.n_features, self.n_features)))    # (3, 2, 2)
-        self.alpha_k        = np.ones(self.K)                                           # prior probabilities, (3,)
+        self.clusters_means = np.zeros((self.K, self.n_features))                       # (K, d)
+        self.clusters_covar = np.zeros(((self.K, self.n_features, self.n_features)))    # (K, d, d)
+        self.alpha_k        = np.ones(self.K)                                           # prior probabilities, (K,)
 
-        self.posteriors     = np.zeros((self.n_samples, self.K), dtype=np.float64)      # (456532, 3)
-        self.pred_labels    = np.zeros((self.n_samples,))                               # (456532,)
+        self.posteriors     = np.zeros((self.n_samples, self.K), dtype=np.float64)      # (N, K)
+        self.pred_labels    = np.zeros((self.n_samples,))                               # (N,)
+
+        self.atlas_prob     = np.zeros((self.n_samples, self.K), dtype=np.float64) # atlas probabilities, (N, K)
 
         if self.modality not in ['single', 'multi']:
             raise ValueError('Wronge modality type passed. Only supports "single" or "multi" options.')
@@ -329,13 +397,27 @@ class EM:
         
         if (atlas_csf is None or atlas_wm  is None or atlas_gm is None) and self.params_init_type == 'atlas':
             raise ValueError('Missing atlases argument.')
+        
+        if ((atlas_csf is None or atlas_wm  is None or atlas_gm is None) or (tissue_model_csv_dir is None)) and self.params_init_type == 'tissue_models_atlas': 
+            raise ValueError('Missing one of the initialization arguments, either tissue_model_csv_dir or atlases.')
 
         # assign model parameters their initial values
-        # self.initialize_parameters(data=self.tissue_data)
         self.initialize_parameters(self.tissue_data, tissue_model_csv_dir, atlas_csf, atlas_wm, atlas_gm)
 
     def skull_stripping(self, image, label):
+        '''Performs only skull stripping and returns the volume with the label tissues only.
+        
+        Args:
+            image ('np.array'):
+                An intensity volume for the brain in the form of a numpy array.
+            
+            label ('np.array'):
+                The labels volume associated to the intensity volume passed as an image.
 
+        Returns:
+            The skull stripped volume in the same shape of the passed intensity volume. The output will still contain
+            background labelled as 0 as a result of the multiplication. The output volume is a numpy array.
+        '''
         # convert the labels to binary form, all tissues to 1, else is 0
         labels_binary   = np.where(label == 0, 0, 1)
 
@@ -386,8 +468,8 @@ class EM:
     def initialize_parameters(self, data, tissue_model_csv_dir, *atlases):
         '''Initializes the model parameters and the weights at the beginning of EM algorithm. It returns the initialized parameters.
 
-        Arguments:
-            - data (numpy.ndarray): The intensity image (tissue data) in its original shape.
+        Args:
+            data ('numpy.ndarray'): The intensity image (tissue data) in its original shape.
             - tissue_map_csv_dir (str): path to the tissue model csv file.
 
         '''
@@ -422,11 +504,11 @@ class EM:
             # get the segmentation labels
             segmentation = None 
             if self.params_init_type == 'tissue_models': # tissue models
-                segmentation = self.BrainAtlas.segment_using_tissue_models(image=data_volume, tissue_map_csv=tissue_model_csv_dir)
+                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_models(image=data_volume, tissue_map_csv=tissue_model_csv_dir)
             elif self.params_init_type == 'atlas': # atlas
-                segmentation = self.BrainAtlas.segment_using_tissue_atlas(data_volume, *atlases)
+                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_atlas(data_volume, *atlases)
             else: # using both atlas and tissue models
-                segmentation = self.BrainAtlas.segment_using_tissue_models_and_atlas(data_volume, tissue_model_csv_dir, *atlases)
+                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_models_and_atlas(data_volume, tissue_model_csv_dir, *atlases)
 
             # self.NM.show_nifti(segmentation == 1, title="intermediate parameter init segmentation", slice=137)
 
@@ -451,39 +533,6 @@ class EM:
 
         # validating alpha condition
         assert np.isclose(np.sum(self.alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "initialize_parameters". Sum of all self.alpha_k elements has to be equal to 1.'
-
-    # def __initialize_parameters(self, data):
-    #     '''Initializes the model parameters and the weights at the beginning of EM algorithm. It returns the initialized parameters.
-
-    #     Args:
-    #         data (numpy.ndarray): The data points.
-    #     '''
-
-    #     if self.params_init_type not in ['kmeans', 'random']:
-    #         raise ValueError(f"Invalid initialization type {self.params_init_type}. Both 'random' and 'kmeans' initializations are available.")
-        
-    #     if self.params_init_type == 'kmeans':
-    #         kmeans              = KMeans(n_clusters=self.K, random_state=self.seed, n_init='auto', init='k-means++').fit(data)
-    #         cluster_labels      = kmeans.labels_                # labels : ndarray of shape (456532,)
-    #         centroids           = kmeans.cluster_centers_       # (3, 2)
-    #         self.alpha_k        = np.array([np.sum([cluster_labels == i]) / len(cluster_labels) for i in range(self.K)]) # ratio for each cluster
-
-    #     else:  # 'random' initialization
-    #         random_centroids    = np.random.randint(np.min(data), np.max(data), size=(self.K, self.n_features)) # shape (3,2)
-    #         random_label        = np.random.randint(low=0, high=self.K, size=self.n_samples) # (456532,)
-    #         self.alpha_k        = np.ones(self.K, dtype=np.float64) / self.K 
-
-    #     cluster_data            = [data[cluster_labels == i] for i in range(self.K)] if self.params_init_type == 'kmeans' \
-    #                                 else [data[random_label == i] for i in range(self.K)]
-        
-    #     # update model parameters (mean and covar)
-    #     self.clusters_means     = centroids if self.params_init_type == 'kmeans' else random_centroids
-    #     self.clusters_covar     = np.array([np.cov(cluster_data[i], rowvar=False) for i in range(self.K)]) # (3, 2, 2)
-
-    #     # validating alpha condition
-    #     assert np.isclose(np.sum(self.alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "initialize_parameters". Sum of all self.alpha_k elements has to be equal to 1.'
-
-    #     logger.info(f"Successfully initialized model parameters using '{self.params_init_type}'.")
 
     def multivariate_gaussian_probability(self, x, mean_k, cov_k, regularization=1e-4):
             '''
@@ -656,7 +705,17 @@ class EM:
 
         return corrected_segmentation
 
-    def fit(self, n_iterations, labels_gt_file, t1_path, t2_path = None ,correct_labels=True, tissue_model_csv_dir=None, atlas_csf = None, atlas_wm = None, atlas_gm= None):
+    def fit(self, 
+            n_iterations, 
+            labels_gt_file, 
+            t1_path, 
+            t2_path = None ,
+            correct_labels=True, 
+            tissue_model_csv_dir=None, 
+            atlas_csf = None, 
+            atlas_wm = None, 
+            atlas_gm= None
+            ):
         '''Main function that fits the EM algorithm'''
 
         logger.info(f"Fitting the algorithm with {n_iterations} iterations.")
@@ -685,7 +744,7 @@ class EM:
             current_idx += 1
 
         logger.info(f"Iterations performed: {current_idx-1}. Displaying the segmentation result..")
-
+        
         # creating a segmentation result with the predictions
         segmentation_result = self.generate_segmentation(
             posteriors=self.posteriors, 
