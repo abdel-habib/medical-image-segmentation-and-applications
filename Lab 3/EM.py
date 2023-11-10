@@ -42,12 +42,16 @@ class NiftiManager:
         plt.subplot(1, 2, 1)
         plt.imshow(label[:, :, slice], cmap='gray') 
         plt.title(f'Label Image (Subject ID={subject_id})')
-        plt.colorbar()
+        # plt.colorbar()
+        plt.axis('off')
+
 
         plt.subplot(1, 2, 2)
         plt.imshow(seg[:, :, slice], cmap='gray') 
         plt.title(f'Segmentation Image (Subject ID={subject_id})')
-        plt.colorbar()
+        # plt.colorbar()
+        plt.axis('off')
+
         plt.show()
 
     def show_mean_volumes(self, mean_csf, mean_wm, mean_gm, slices=[128], export=False, filename=None):
@@ -144,7 +148,7 @@ class BrainAtlasManager:
     def __init__(self) -> None:
         pass
 
-    def segment_using_tissue_models(self, image, tissue_map_csv):
+    def segment_using_tissue_models(self, image, label, tissue_map_csv):
         '''
         Task (1.1) Tissue models: segmentation using just intensity information.
 
@@ -152,6 +156,9 @@ class BrainAtlasManager:
             image ('np.array'):
                 A normalized [0, 255] and skull stripped intensity volume for the brain in the form of a numpy array. 
                 This is the required volume to be segmented.
+
+            label ('np.array'):
+                A nifti volume for the intensity image. Pixels labeled as 0 will be treated as background.
 
             tissue_map_csv ('Path'): 
                 A csf file path that contains the tissue maps probabilities. The file should contain three columns, 
@@ -173,32 +180,39 @@ class BrainAtlasManager:
         tissue_map_df = pd.read_csv(tissue_map_csv, header=None)
         tissue_map_array = tissue_map_df.values
 
-        # map background pixels above 100 to WM (label 2)
-        # we need to select the second column for the csf. If the order for the columns and tissues
-        # are different from the one defined in the comments, the column index has to be modified
-        # csf is in column 1
-        bg_mask = np.arange(len(tissue_map_array)) > 100
+        # binary mask
+        binary_mask = np.where(label == 0, 0, 1) 
+
+        # map background pixels above a threshold to WM (label 2)
+        threshold = 100
+        bg_mask = np.arange(len(tissue_map_array)) > threshold
         tissue_map_array[bg_mask, 1] = 2
 
-        # obtain the argmax to know to which cluster each row (histogram pin - 0:255) falls into
-        tissue_map_array_argmax = np.argmax(tissue_map_array, axis=1) + 1
-        
-        # create a black image as a template for the segmentation to fill
-        segmentation_result =  np.zeros_like(image)
+        # flatten the image and select only tissues within the mask
+        registered_volume_test = image[binary_mask == 1].flatten()
 
-        # loop through the argmax values of the tissue map
-        # index represent the pixel value we want to map to its corrosponding segmentation result of the argmax
-        # the value is the new label of that pixel
-        for index, value in enumerate(tissue_map_array_argmax):
-            # we add a condition to select the pixels that are equal to the index, and not the background as we want to preserve the background
-            condition = np.logical_and(image == index, image != 0)
-            
-            # we update the zeros template with the label value that we obtained from argmax 
-            segmentation_result[condition] = value
+        # using registered_volume_test as an index to extract specific rows from tissue_map_array
+        tissue_map_array = tissue_map_array[registered_volume_test, :]
+
+        # obtain the argmax to know to which cluster each row (histogram bin - 0:255) falls into
+        tissue_map_array_argmax = np.argmax(tissue_map_array, axis=1) + 1
+
+        # Reshape the atlases_argmax array to match the shape of the original image
+        reshaped_atlases_argmax = tissue_map_array_argmax.reshape(image[binary_mask == 1].shape)
+
+        # Create an empty segmentation result with the same shape as the original image
+        segmentation_result = np.zeros_like(image)
+
+        # Set the background (ignored) pixels to label 0
+        segmentation_result[binary_mask == 0] = 0
+
+        # set the segmented values where indexes falls to be true
+        segmentation_result[binary_mask == 1] = reshaped_atlases_argmax
 
         return segmentation_result, tissue_map_array
+
     
-    def segment_using_tissue_atlas(self, image, *atlases):
+    def segment_using_tissue_atlas(self, image, label, *atlases):
         '''
         Task (1.2) Label propagation: segmentation using just position information using atlases
 
@@ -206,9 +220,12 @@ class BrainAtlasManager:
             image ('np.array'):
                 A normalized [0, 255] and skull stripped intensity volume for the brain in the form of a numpy array. 
                 This is the required volume to be segmented. 
+            
+            label ('np.array'):
+                A nifti volume for the intensity image. Pixels labeled as 0 will be treated as background.
 
             atlases ('np.arrays'): 
-                            atlases nifti data files for CSF, WM, and GM as in order.        
+                atlases nifti data files for CSF, WM, and GM as in order.        
         
         Returns:
             The segmented volume in the same shape of the passed intensity volume. The output is given in labels for 
@@ -222,39 +239,44 @@ class BrainAtlasManager:
             concatenated_atlas ('np.array'):
                 An array that represents the final atlas probabilities. 
         '''
+        # binary mask
+        binary_mask = np.where(label == 0, 0, 1) 
 
         # get the atlases
-        atlas_csf = atlases[0]
-        atlas_wm  = atlases[1]
-        atlas_gm  = atlases[2]
-
-        # flatten the input image
-        registered_volume_test = image.flatten()
+        atlas_csf = atlases[0][binary_mask == 1].flatten()
+        atlas_wm  = atlases[1][binary_mask == 1].flatten()
+        atlas_gm  = atlases[2][binary_mask == 1].flatten()
 
         # concatenate the flatenned atlases to form a NxK shaped array of arrays
-        concatenated_atlas = np.column_stack((atlas_csf.flatten(), atlas_wm.flatten(), atlas_gm.flatten()))
-
+        concatenated_atlas = np.column_stack((atlas_csf, atlas_wm, atlas_gm))
+        
         # get the argmax for each row to find which cluster does each sample refers to
         atlases_argmax = np.argmax(concatenated_atlas, axis=1) + 1
 
-        # Create a mask to identify non-zero pixels
-        non_zero_mask = registered_volume_test != 0
+        # Create an empty segmentation result with the same shape as the original image
+        segmented_image = np.zeros_like(image)
 
-        # Replace non-zero pixels with their equivalent values from atlas argmax
-        segmented_image = np.where(non_zero_mask, atlases_argmax, 0)
+        # Reshape the atlases_argmax array to match the shape of the original image
+        reshaped_atlases_argmax = atlases_argmax.reshape(image[binary_mask == 1].shape)
 
-        # Reshape the segmented image to its original shape if needed
-        segmented_image = segmented_image.reshape(image.shape)
+        # Set the background (ignored) pixels to label 0
+        segmented_image[binary_mask == 0] = 0
+
+        # set the segmented values where indexes falls to be true
+        segmented_image[binary_mask == 1] = reshaped_atlases_argmax
 
         return segmented_image, concatenated_atlas
     
-    def segment_using_tissue_models_and_atlas(self, image, tissue_map_csv, *atlases):
+    def segment_using_tissue_models_and_atlas(self, image, label, tissue_map_csv, *atlases):
         '''(1.3) Tissue models & label propagation: multiplying both results: segmentation using intensity & position information
 
         Args:
             image ('np.array'):
                 A normalized [0, 255] and skull stripped intensity volume for the brain in the form of a numpy array. 
                 This is the required volume to be segmented.
+
+            label ('np.array'):
+                A nifti volume for the intensity image. Pixels labeled as 0 will be treated as background.
 
             tissue_map_csv ('Path'): 
                 A csf file path that contains the tissue maps probabilities. The file should contain three columns, 
@@ -280,23 +302,24 @@ class BrainAtlasManager:
         tissue_map_df = pd.read_csv(tissue_map_csv, header=None)
         tissue_map_array = tissue_map_df.values
 
-        # map background pixels above 100 to WM (label 2)
-        # we need to select the second column for the csf. If the order for the columns and tissues
-        # are different from the one defined in the comments, the column index has to be modified
-        # csf is in column 1
-        bg_mask = np.arange(len(tissue_map_array)) > 100
+        # map background pixels above a threshold to WM (label 2)
+        threshold = 100
+        bg_mask = np.arange(len(tissue_map_array)) > threshold
         tissue_map_array[bg_mask, 1] = 2
 
+        # binary mask
+        binary_mask = np.where(label == 0, 0, 1) 
+
         # get the atlases
-        atlas_csf = atlases[0]
-        atlas_wm  = atlases[1]
-        atlas_gm  = atlases[2]
+        atlas_csf = atlases[0][binary_mask == 1].flatten()
+        atlas_wm  = atlases[1][binary_mask == 1].flatten()
+        atlas_gm  = atlases[2][binary_mask == 1].flatten()
 
         # concatenate the flatenned atlases to form a NxK shaped array of arrays
-        concatenated_atlas = np.column_stack((atlas_csf.flatten(), atlas_wm.flatten(), atlas_gm.flatten())) # (18808832, 3)
-
+        concatenated_atlas = np.column_stack((atlas_csf, atlas_wm, atlas_gm))
+        
         # Perform Bayesian segmentation
-        registered_volume_test = image.flatten()
+        registered_volume_test = image[binary_mask == 1].flatten()
 
         # using registered_volume_test as an index to extract specific rows from tissue_map_array
         tissue_map_array = tissue_map_array[registered_volume_test, :]
@@ -307,14 +330,17 @@ class BrainAtlasManager:
         # ger the argmax for each sample to know for which cluster does it belongs, +1 to avoid 0 value
         posteriors_argmax = np.argmax(posteriors, axis=1) + 1
 
-        # Create a mask to identify non-zero pixels
-        non_zero_mask = registered_volume_test != 0
+        # Create an empty segmentation result with the same shape as the original image
+        segmented_image = np.zeros_like(image)
 
-        # Replace non-zero pixels with their equivalent values from atlas argmax
-        segmented_image = np.where(non_zero_mask, posteriors_argmax, 0)
+        # Reshape the atlases_argmax array to match the shape of the original image
+        reshaped_atlases_argmax = posteriors_argmax.reshape(image[binary_mask == 1].shape)
 
-        # Reshape the segmented image to its original shape if needed
-        segmented_image = segmented_image.reshape(image.shape)
+        # Set the background (ignored) pixels to label 0
+        segmented_image[binary_mask == 0] = 0
+
+        # set the segmented values where indexes falls to be true
+        segmented_image[binary_mask == 1] = reshaped_atlases_argmax
 
         return segmented_image, posteriors
 
@@ -434,18 +460,18 @@ class EM:
 
         # load the nifti files & creating a binary mask from the gt labels
         self.labels_nifti, _ = self.NM.load_nifti(labels_gt_file)
-        labels_binary   = np.where(self.labels_nifti == 0, 0, 1)
+        labels_mask   = np.where(self.labels_nifti == 0, 0, 1)
 
-        # loading the volumes and performing skull stripping 
+        # loading the volume, performing skull stripping and normalization 
         self.t1_volume  = self.NM.min_max_normalization(
             self.NM.load_nifti(t1_path)[0], 255).astype('uint8')
         
-        t1_selected_tissue = self.t1_volume[labels_binary == 1].flatten()
+        t1_selected_tissue = self.t1_volume[labels_mask == 1].flatten()
 
         # The true mask labels count must equal to the number of voxels we segmented
-        # np.count_nonzero(labels_binary) returns the sum of pixel values that are True, the count should be equal to the number
+        # np.count_nonzero(labels_mask) returns the sum of pixel values that are True, the count should be equal to the number
         # of pixels in the selected tissue array
-        assert np.count_nonzero(labels_binary) == t1_selected_tissue.shape[0], 'Error while removing T1 black background.'
+        assert np.count_nonzero(labels_mask) == t1_selected_tissue.shape[0], 'Error while removing T1 black background.'
 
         # put both tissues into the d-dimensional data vector [[feature_1, feature_2]]
         if self.modality == 'multi':
@@ -455,15 +481,15 @@ class EM:
             t2_volume  = self.NM.min_max_normalization(
                 self.NM.load_nifti(t2_path)[0], 255).astype('uint8')
             
-            t2_selected_tissue = t2_volume[labels_binary == 1].flatten()
+            t2_selected_tissue = t2_volume[labels_mask == 1].flatten()
 
-            assert np.count_nonzero(labels_binary) == t2_selected_tissue.shape[0], 'Error while removing T2_FLAIR black background.'
+            assert np.count_nonzero(labels_mask) == t2_selected_tissue.shape[0], 'Error while removing T2_FLAIR black background.'
 
             tissue_data =  np.array([t1_selected_tissue, t2_selected_tissue]).T     # multi-modality
         else:
             tissue_data =  np.array([t1_selected_tissue]).T                       # single modality
 
-        return tissue_data, labels_binary, self.t1_volume.shape
+        return tissue_data, labels_mask, self.t1_volume.shape
     
     def initialize_parameters(self, data, tissue_model_csv_dir, *atlases):
         '''Initializes the model parameters and the weights at the beginning of EM algorithm. It returns the initialized parameters.
@@ -476,7 +502,6 @@ class EM:
 
         if self.params_init_type not in ['kmeans', 'random', 'tissue_models', 'atlas', 'tissue_models_atlas']:
             raise ValueError(f"Invalid initialization type {self.params_init_type}. Both 'random' and 'kmeans' initializations are available.")
-        
 
         logger.info(f"Initializing model parameters using '{self.params_init_type}'.")
 
@@ -492,25 +517,24 @@ class EM:
             self.alpha_k        = np.ones(self.K, dtype=np.float64) / self.K 
         
         elif self.params_init_type in ['tissue_models', 'atlas', 'tissue_models_atlas']:  # 'tissue_models' or 'atlas' initialization
-            # print(data[:,0].reshape(self.img_shape).shape)
 
             # the problem here is that the data is no longer in its original shape, it is (Nxd), and we can't reshape it as it is skull stripped
             # we have to re-form the image, or pass it here in a way that data is the skull stripped image
             # segment_using_tissue_models receives the images normalized, we normalized in an earlier step
             data_volume         = self.skull_stripping(image=self.t1_volume, label=self.labels_nifti)
-
+            
             # self.NM.show_nifti(self.t1_volume, title="self.t1_volume init segmentation", slice=128)
 
             # get the segmentation labels
             segmentation = None 
             if self.params_init_type == 'tissue_models': # tissue models
-                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_models(image=data_volume, tissue_map_csv=tissue_model_csv_dir)
+                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_models(image=data_volume, label=self.labels_nifti,tissue_map_csv=tissue_model_csv_dir)
             elif self.params_init_type == 'atlas': # atlas
-                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_atlas(data_volume, *atlases)
+                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_atlas(data_volume, self.labels_nifti, *atlases)
             else: # using both atlas and tissue models
-                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_models_and_atlas(data_volume, tissue_model_csv_dir, *atlases)
+                segmentation, self.atlas_prob = self.BrainAtlas.segment_using_tissue_models_and_atlas(data_volume, self.labels_nifti, tissue_model_csv_dir, *atlases)
 
-            # self.NM.show_nifti(segmentation == 1, title="intermediate parameter init segmentation", slice=137)
+            # self.NM.show_nifti(segmentation, title="intermediate parameter init segmentation", slice=137)
 
             # we have to substract 1 as inside the function `segmentation_tissue_model`, we add 1 to the segmentation argmax predictions
             # we also have to remove the 0 background 
@@ -541,9 +565,9 @@ class EM:
             data without a complex iteratitve matrix multiplication.
     
             Args:
-                x (numpy.ndarray): The data points.
-                mean_k (numpy.ndarray): The mean vector for cluster K.
-                cov_k (numpy.ndarray): The covariance matrix for cluster K.
+                x ('numpy.ndarray'): The data points.
+                mean_k ('numpy.ndarray'): The mean vector for cluster K.
+                cov_k ('numpy.ndarray'): The covariance matrix for cluster K.
     
             Returns:
                 float: The probability density at the given data point.
@@ -665,12 +689,12 @@ class EM:
         '''Maps the pixel values of the prediction volume that matches the prediction labels to the gt labels values. This is based on prior knowledge 
         of the correct labl for each cluster, known from a ground truth label volume.
         
-        Arguments:
-            - segmentation_result (np.array): segmentation volume resulted from the algorithm
-            - gt_binary (np.array): binarized ans flattened volume for the segmented volume, the label/ground truth.
+        Args:
+            segmentation_result (np.array): segmentation volume resulted from the algorithm
+            gt_binary (np.array): binarized ans flattened volume for the segmented volume, the label/ground truth.
 
         Returns:
-            - corrected_segmentation (np.array): segmentation volume with the corrected label for each cluster.
+            corrected_segmentation (np.array): segmentation volume with the corrected label for each cluster.
         '''
 
         logger.info("Finished segmentation. Correcting prediction labels...")
