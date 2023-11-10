@@ -382,8 +382,9 @@ class EM:
 
         # atlas parameters
         self.atlas_prob     = None      # (N, K)
+        self.include_atlas  = None
 
-    def initialize_for_fit(self, labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, *atlases):
+    def initialize_for_fit(self, labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, include_atlas, *atlases):
         '''Initialize variables only when fitting the algorithm.'''
                 
         # get the atlases
@@ -414,6 +415,7 @@ class EM:
         self.pred_labels    = np.zeros((self.n_samples,))                               # (N,)
 
         self.atlas_prob     = np.zeros((self.n_samples, self.K), dtype=np.float64) # atlas probabilities, (N, K)
+        self.include_atlas  = include_atlas
 
         if self.modality not in ['single', 'multi']:
             raise ValueError('Wronge modality type passed. Only supports "single" or "multi" options.')
@@ -426,6 +428,9 @@ class EM:
         
         if ((atlas_csf is None or atlas_wm  is None or atlas_gm is None) or (tissue_model_csv_dir is None)) and self.params_init_type == 'tissue_models_atlas': 
             raise ValueError('Missing one of the initialization arguments, either tissue_model_csv_dir or atlases.')
+        
+        if include_atlas and (include_atlas not in ["posteriori"]):
+            raise ValueError('Error with include_atlas value. Only "posteriori" method is supported.')
 
         # assign model parameters their initial values
         self.initialize_parameters(self.tissue_data, tissue_model_csv_dir, atlas_csf, atlas_wm, atlas_gm)
@@ -445,10 +450,10 @@ class EM:
             background labelled as 0 as a result of the multiplication. The output volume is a numpy array.
         '''
         # convert the labels to binary form, all tissues to 1, else is 0
-        labels_binary   = np.where(label == 0, 0, 1)
+        labels_mask   = np.where(label == 0, 0, 1)
 
         # multiply the image to get only the tissues
-        return np.multiply(image, labels_binary)
+        return np.multiply(image, labels_mask)
     
     def get_tissue_data(self, labels_gt_file, t1_path, t2_path):
         '''Removes the black background from the skull stripped volume and returns a 1D array of the voxel intensities \
@@ -519,8 +524,8 @@ class EM:
         elif self.params_init_type in ['tissue_models', 'atlas', 'tissue_models_atlas']:  # 'tissue_models' or 'atlas' initialization
 
             # the problem here is that the data is no longer in its original shape, it is (Nxd), and we can't reshape it as it is skull stripped
-            # we have to re-form the image, or pass it here in a way that data is the skull stripped image
-            # segment_using_tissue_models receives the images normalized, we normalized in an earlier step
+            # we have to re-form the image, or pass it here in a way that data is the skull stripped image segment_using_tissue_models receives 
+            # the images normalized, we normalized in an earlier step
             data_volume         = self.skull_stripping(image=self.t1_volume, label=self.labels_nifti)
             
             # self.NM.show_nifti(self.t1_volume, title="self.t1_volume init segmentation", slice=128)
@@ -636,13 +641,13 @@ class EM:
                                     
             # updates every k cluster column 
             posteriors[:,k] = cluster_prob * self.alpha_k[k] 
-        
+
         # normalize the posteriors "membership weights" row by row separately by dividing by the total sum of each row
         posteriors /= np.sum(posteriors, axis=1)[:, np.newaxis]
 
         # the sum of the 3 clusters probabilities should be equal to 1
         assert np.isclose(np.sum(posteriors[0,]), 1.0, atol=self.sum_tolerance), 'Error with calculating the posterior probabilities "membership weights" for each voxel.'
-
+        
         return posteriors
     
     def maximization(self, w_ik, tissue_data):
@@ -697,7 +702,7 @@ class EM:
             corrected_segmentation (np.array): segmentation volume with the corrected label for each cluster.
         '''
 
-        logger.info("Finished segmentation. Correcting prediction labels...")
+        logger.info("Finished segmentation. Correcting prediction labels.")
 
         means = np.mean(self.clusters_means, axis=1)
 
@@ -738,19 +743,19 @@ class EM:
             tissue_model_csv_dir=None, 
             atlas_csf = None, 
             atlas_wm = None, 
-            atlas_gm= None
+            atlas_gm= None,
+            include_atlas = False
             ):
         '''Main function that fits the EM algorithm'''
 
-        logger.info(f"Fitting the algorithm with {n_iterations} iterations.")
+        logger.info(f"Starting the algorithm. {n_iterations} iterations were initialized.")
 
         # Initialize parameters for fitting
-        self.initialize_for_fit(labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, atlas_csf, atlas_wm, atlas_gm)
+        self.initialize_for_fit(labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, include_atlas, atlas_csf, atlas_wm, atlas_gm)
         
         current_idx         = 0
 
-        while (current_idx <= n_iterations):
-            
+        while (current_idx <= n_iterations):            
             # E-Step
             self.posteriors = self.expectation()
                         
@@ -767,7 +772,11 @@ class EM:
 
             current_idx += 1
 
-        logger.info(f"Iterations performed: {current_idx-1}. Displaying the segmentation result..")
+        if include_atlas and include_atlas == "posteriori" and self.params_init_type not in ['kmeans', 'random']:
+            logger.info(f"Including atlas probabilities into EM result using {include_atlas} method.")
+            self.posteriors *= self.atlas_prob
+
+        logger.info(f"Iterations performed: {current_idx-1}. Generating segmentation results.")
         
         # creating a segmentation result with the predictions
         segmentation_result = self.generate_segmentation(
