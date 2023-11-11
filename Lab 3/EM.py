@@ -6,16 +6,53 @@ from sklearn.cluster import KMeans
 from scipy.stats import multivariate_normal
 from tqdm import tqdm
 
+import subprocess
+from glob import glob
+import math
+from tqdm import tqdm
+import pprint
+import pandas as pd
+
 from loguru import logger
 import pandas as pd
 
 class FileManager:
     def __init__(self) -> None:
-        pass
+        self.pp = pprint.PrettyPrinter(indent=4)
 
     def check_file_existence(self, file, description):
         if file is None:
             raise ValueError(f"Please check if the {description} file passed exists in the specified directory")
+        
+    def create_directory_if_not_exists(self, path):
+        if not os.path.exists(path):
+            os.makedirs(path)
+
+    def pprint_objects(self, *arg):
+        '''Prints large and indented objects clearly.'''
+        self.pp.pprint(arg)
+
+    def replace_text_in_file(self, file_path, search_text, replacement_text):
+        '''Function used to read a txt file, search for a given text, modify it, and save it in the same file.
+        '''
+        try:
+            # Read the file
+            with open(file_path, 'r') as file:
+                content = file.read()
+
+            # Replace the search_text with replacement_text
+            modified_content = content.replace(search_text, replacement_text)
+
+            # Write the modified content back to the file
+            with open(file_path, 'w') as file:
+                file.write(modified_content)
+
+            # print(f"Text replaced in {file_path} and saved.")
+        except FileNotFoundError:
+            print(f"File not found: {file_path}")
+        # except Exception as e:
+        #     print(f"An error occurred: {e}")
+
 
 class NiftiManager:
     def __init__(self) -> None:
@@ -114,14 +151,15 @@ class NiftiManager:
         
         return normalized_image
 
-    def export_nifti(self, volume, export_path):
+    def export_nifti(self, volume, export_path, fdata=None):
         '''Exports nifti volume to a given path.
         '''
         
         # Create a NIfTI image from the NumPy array
         # np.eye(4): Identity affine transformation matrix, it essentially assumes that the images are in the same orientation and position 
         # as the original images
-        img = nib.Nifti1Image(volume, np.eye(4))
+        affine = fdata.affine if fdata else np.eye(4)
+        img = nib.Nifti1Image(volume, affine)
 
         # Save the NIfTI image
         nib.save(img, str(export_path))
@@ -143,6 +181,79 @@ class Evaluate:
         dice = (2.0 * intersection) / (union + 1e-8)  # Add a small epsilon to avoid division by zero
 
         return dice
+    
+class ElastixTransformix:
+    def __init__(self) -> None:
+        pass
+
+    def excute_cmd(self, command):
+        # excute the command
+        result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
+
+        # Check the return code to see if the command was successful
+        if result.returncode == 0:
+            # print("Command executed successfully.")
+            # print("Output:")
+            return result.stdout
+        else:
+            print(f"Command failed with an error: {command}")
+            print(result.stderr)
+            return result.stderr
+
+    # Perform registration and label propagation
+    def register_elastix(self,
+                        fixed_path, 
+                        moving_path, 
+                        reg_params, 
+                        create_dir_callback, 
+                        excute_cmd_callback,
+                        fMask = None):
+
+        # Get the names of the fixed and moving images for the output directory, names without the file extensions
+        reg_fixed_name  = fixed_path.replace("\\", "/").split("/")[-1].split(".")[0] # \\
+        reg_moving_name = moving_path.replace("\\", "/").split("/")[-1].split(".")[0]
+
+        # create output dir
+        output_dir = f'output/images/output_{reg_fixed_name}/{reg_moving_name}'
+        create_dir_callback(output_dir)
+
+        # create elastix command line
+        command_line = f'elastix -f "{fixed_path}" -m "{moving_path}" {reg_params} -out "{output_dir}"' if not fMask else \
+                        f'elastix -f "{fixed_path}" -m "{moving_path}" -fMask {fMask} {reg_params} -out "{output_dir}"'
+
+        # call elastix command
+        excute_cmd_callback(command_line)
+
+    def label_propagation_transformix(
+        self,
+        fixed_path, 
+        moving_path, 
+        input_label, 
+        transform_path, 
+        replace_text_in_file_callback, 
+        create_dir_callback, 
+        excute_cmd_callback):
+        
+        replace_text_in_file_callback(
+            transform_path, 
+            search_text = '(FinalBSplineInterpolationOrder 3)', 
+            replacement_text =  '(FinalBSplineInterpolationOrder 0)')
+
+        # Get the names of the fixed and moving images for the output directory, names without the file extensions
+        reg_fixed_name  = fixed_path.replace("\\", "/").split("/")[-1].split(".")[0] 
+        reg_moving_name = os.path.join(moving_path.replace("\\", "/").split("/")[0], moving_path.replace("\\", "/").split("/")[-1].split(".")[0])
+            
+        # create an output directory for the labels
+        output_dir = f'output/labels/output_{reg_fixed_name}/{reg_moving_name}' # rem _float64
+
+        # creates the output directory
+        create_dir_callback(output_dir)
+        
+        # create transformix command line
+        command_line = f'transformix -in "{input_label}" -tp "{transform_path}"  -out "{output_dir}"'
+        
+        # run transformix on all combinations
+        excute_cmd_callback(command_line)
     
 class BrainAtlasManager:
     def __init__(self) -> None:
@@ -372,12 +483,12 @@ class EM:
                                         # based on the number of modalities we pass
 
         # create parameters objects
-        self.clusters_means = None     # (K, d)
-        self.clusters_covar = None     # (K, d, d)
-        self.alpha_k        = None     # prior probabilities, (K,)
+        self.clusters_means = None      # (K, d)
+        self.clusters_covar = None      # (K, d, d)
+        self.alpha_k        = None      # prior probabilities, (K,)
 
-        self.posteriors     = None     # (N, K)
-        self.pred_labels    = None     # (N,)
+        self.posteriors     = None      # (N, K)
+        self.pred_labels    = None      # (N,)
         self.loglikelihood  = [-np.inf]
 
         # atlas parameters
