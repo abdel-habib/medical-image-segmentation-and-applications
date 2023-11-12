@@ -182,6 +182,29 @@ class Evaluate:
 
         return dice
     
+    def evaluate_dice_volumes(self, volume1, volume2, labels=None):
+        # Ensure the masks have the same shape
+        if volume1.shape != volume2.shape:
+            raise ValueError("Input masks must have the same shape.")
+        
+        if labels is None:
+            raise ValueError("Missing labels argument.")
+        
+        dice_coefficients = {}
+
+        for tissue_label in ['CSF', 'GM', 'WM']:
+            mask1 = volume1 == labels[tissue_label]
+            mask2 = volume2 == labels[tissue_label]
+
+            dice_coefficient = self.calc_dice_coefficient(mask1, mask2)
+            dice_coefficients[tissue_label] = dice_coefficient
+
+            print(f"{tissue_label} DICE: {dice_coefficient}")
+
+        return dice_coefficients
+        
+
+    
 class ElastixTransformix:
     def __init__(self) -> None:
         pass
@@ -464,7 +487,7 @@ class EM:
         self.labels_gt_file, self.t1_path, self.t2_path = None, None, None
         self.labels_nifti, self.t1_volume = None, None
 
-        self.sum_tolerance          = 1e-3
+        self.sum_tolerance          = 0.03
         self.convergence_tolerance  = 200
         self.seed                   = 42
 
@@ -785,14 +808,22 @@ class EM:
             # alpha priors
             alpha_k[k] = N_k / self.n_samples
 
+
         # validating alpha condition
-        assert np.isclose(np.sum(alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "maximization". Sum of all self.alpha_k elements has to be equal to 1.'
+        assert np.isclose(np.sum(alpha_k), 1, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "maximization". Sum of all self.alpha_k elements has to be equal to 1.'
 
         return alpha_k, mu_k, covariance_matrix
     
-    def log_likelihood(self, alpha, w):
-        # return np.sum(np.log(np.sum(alpha[k] * w[i, k] for i in range(self.n_samples) for k in range(self.K))))
-        return np.sum(np.log(np.sum(alpha[k] * w[:, k] for k in range(self.K))))
+    def log_likelihood(self, alpha, clusters_means, clusters_covar, multivariate_gaussian_probability_callback):
+        return np.sum(
+                    np.log(
+                        np.sum(
+                            alpha[k] * multivariate_gaussian_probability_callback(
+                            x=self.tissue_data, 
+                            mean_k=clusters_means[k], 
+                            cov_k=clusters_covar[k]) for k in range(self.K))
+                        )
+                    )
 
     def generate_segmentation(self, posteriors, gt_binary):
         predictions = np.argmax(posteriors, axis=1) + 1
@@ -866,12 +897,16 @@ class EM:
         
         current_idx         = 0
 
+        # Starting with an M-step as we have information from the atlas that we can initialize from
+        if include_atlas and include_atlas == "posteriori" and self.params_init_type in ['tissue_models', 'atlas', 'tissue_models_atlas']:
+            self.alpha_k, self.clusters_means, self.clusters_covar = self.maximization(self.atlas_prob, self.tissue_data)
+
         while (current_idx <= n_iterations):            
             # E-Step
             self.posteriors = self.expectation()
                         
             # Log-likelihood convergance check
-            current_likelihood = self.log_likelihood(self.alpha_k, self.posteriors)  
+            current_likelihood = self.log_likelihood(self.alpha_k, self.clusters_means, self.clusters_covar, self.multivariate_gaussian_probability)  
 
             if (np.abs(current_likelihood - self.loglikelihood[-1]) < self.convergence_tolerance):
                 break
@@ -886,7 +921,7 @@ class EM:
         if include_atlas and include_atlas == "posteriori" and self.params_init_type not in ['kmeans', 'random']:
             logger.info(f"Including atlas probabilities into EM result using {include_atlas} method.")
             self.posteriors *= self.atlas_prob
-
+        
         logger.info(f"Iterations performed: {current_idx-1}. Generating segmentation results.")
         
         # creating a segmentation result with the predictions
