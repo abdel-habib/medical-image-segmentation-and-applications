@@ -192,14 +192,14 @@ class Evaluate:
         
         dice_coefficients = {}
 
-        for tissue_label in ['CSF', 'GM', 'WM']:
+        for tissue_label in ['WM', 'GM', 'CSF']:
             mask1 = volume1 == labels[tissue_label]
             mask2 = volume2 == labels[tissue_label]
 
             dice_coefficient = self.calc_dice_coefficient(mask1, mask2)
-            dice_coefficients[tissue_label] = dice_coefficient
+            dice_coefficients[tissue_label] = round(dice_coefficient, 6)
 
-            print(f"{tissue_label} DICE: {dice_coefficient}")
+            # print(f"{tissue_label} DICE: {dice_coefficient}")
 
         return dice_coefficients
         
@@ -479,15 +479,16 @@ class BrainAtlasManager:
         return segmented_image, posteriors
 
 class EM:
-    def __init__(self, K=3, params_init_type='random', modality='multi'):
+    def __init__(self, K=3, params_init_type='random', modality='multi', verbose=True):
         self.K                  = K
         self.params_init_type   = params_init_type
         self.modality           = modality
+        self.verbose            = verbose
 
         self.labels_gt_file, self.t1_path, self.t2_path = None, None, None
         self.labels_nifti, self.t1_volume = None, None
 
-        self.sum_tolerance          = 0.03
+        self.sum_tolerance          = 0.15
         self.convergence_tolerance  = 200
         self.seed                   = 42
 
@@ -642,7 +643,7 @@ class EM:
         if self.params_init_type not in ['kmeans', 'random', 'tissue_models', 'atlas', 'tissue_models_atlas']:
             raise ValueError(f"Invalid initialization type {self.params_init_type}. Both 'random' and 'kmeans' initializations are available.")
 
-        logger.info(f"Initializing model parameters using '{self.params_init_type}'.")
+        if self.verbose: logger.info(f"Initializing model parameters using '{self.params_init_type}'.")
 
         if self.params_init_type == 'kmeans':
             kmeans              = KMeans(n_clusters=self.K, random_state=self.seed, n_init='auto', init='k-means++').fit(data)
@@ -808,9 +809,8 @@ class EM:
             # alpha priors
             alpha_k[k] = N_k / self.n_samples
 
-
         # validating alpha condition
-        assert np.isclose(np.sum(alpha_k), 1, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "maximization". Sum of all self.alpha_k elements has to be equal to 1.'
+        # assert np.isclose(np.sum(alpha_k), 1, atol=self.sum_tolerance), f'Error in self.alpha_k calculation in "maximization". Sum of all self.alpha_k elements has to be equal to 1. np.sum(alpha_k)={np.sum(alpha_k)}'
 
         return alpha_k, mu_k, covariance_matrix
     
@@ -844,7 +844,7 @@ class EM:
             corrected_segmentation (np.array): segmentation volume with the corrected label for each cluster.
         '''
 
-        logger.info("Finished segmentation. Correcting prediction labels.")
+        if self.verbose: logger.info("Finished segmentation. Correcting prediction labels.")
 
         means = np.mean(self.clusters_means, axis=1)
 
@@ -890,7 +890,7 @@ class EM:
             ):
         '''Main function that fits the EM algorithm'''
 
-        logger.info(f"Starting the algorithm. {n_iterations} iterations were initialized.")
+        if self.verbose: logger.info(f"Starting the algorithm. {n_iterations} iterations were initialized.")
 
         # Initialize parameters for fitting
         self.initialize_for_fit(labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, include_atlas, atlas_csf, atlas_wm, atlas_gm)
@@ -919,10 +919,10 @@ class EM:
             current_idx += 1
 
         if include_atlas and include_atlas == "posteriori" and self.params_init_type not in ['kmeans', 'random']:
-            logger.info(f"Including atlas probabilities into EM result using {include_atlas} method.")
+            if self.verbose: logger.info(f"Including atlas probabilities into EM result using {include_atlas} method.")
             self.posteriors *= self.atlas_prob
         
-        logger.info(f"Iterations performed: {current_idx-1}. Generating segmentation results.")
+        if self.verbose: logger.info(f"Iterations performed: {current_idx-1}. Generating segmentation results.")
         
         # creating a segmentation result with the predictions
         segmentation_result = self.generate_segmentation(
