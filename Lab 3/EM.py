@@ -513,7 +513,7 @@ class Plot:
         
         # Set labels and title
         ax.set_ylabel('Values')
-        ax.set_title(f'Box Plot of Tissue Types Using ({config}) Configurations')
+        ax.set_title(f'({config}) configurations')
         
         # Show the plot
         plt.show()
