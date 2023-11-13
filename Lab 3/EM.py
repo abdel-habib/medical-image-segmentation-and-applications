@@ -202,9 +202,7 @@ class Evaluate:
             # print(f"{tissue_label} DICE: {dice_coefficient}")
 
         return dice_coefficients
-        
-
-    
+            
 class ElastixTransformix:
     def __init__(self) -> None:
         pass
@@ -477,6 +475,78 @@ class BrainAtlasManager:
         segmented_image[binary_mask == 1] = reshaped_atlases_argmax
 
         return segmented_image, posteriors
+
+class Plot:
+    def __init__(self) -> None:
+        pass
+
+    def plot_boxplot_per_tissue(self, WM_values, GM_values, CSF_values, config):
+        """
+        Plots a box plot for each tissue type based on the provided data.
+
+        Args:
+        - WM_values ('list'): List of white matter values for each patient.
+        - GM_values ('list'): List of gray matter values for each patient.
+        - CSF_values ('list'): List of cerebrospinal fluid values for each patient.
+        - config (str): Configuration information to include in the plot title.
+
+        Returns:
+        None. The function generates and displays the box plot.
+        """
+
+        # Calculate quartiles and IQR for each tissue type
+        WM_q1, WM_q2, WM_q3 = np.percentile(WM_values, [25, 50, 75])
+        WM_iqr = WM_q3 - WM_q1
+        
+        GM_q1, GM_q2, GM_q3 = np.percentile(GM_values, [25, 50, 75])
+        GM_iqr = GM_q3 - GM_q1
+        
+        CSF_q1, CSF_q2, CSF_q3 = np.percentile(CSF_values, [25, 50, 75])
+        CSF_iqr = CSF_q3 - CSF_q1
+
+        # Combine the data for plotting
+        data = [WM_values, GM_values, CSF_values]
+        
+        # Create a box plot
+        fig, ax = plt.subplots()
+        ax.boxplot(data, labels=['WM', 'GM', 'CSF'])
+        
+        # Set labels and title
+        ax.set_ylabel('Values')
+        ax.set_title(f'Box Plot of Tissue Types Using ({config}) Configurations')
+        
+        # Show the plot
+        plt.show()
+
+
+    def plot_boxplot_per_patient(self, values, subjects, config):
+        '''
+        Plots a boxplot for each subject separately.
+
+        Args:
+            values ('list'):
+                A 1D list Contains the values to be plotted.
+
+            subjects ('list'):
+                A 1D list, same length as 'values' for the x-axis of the plot.
+
+        Returns:
+            None. The function generates and displays the box plot.
+        '''
+        
+        # Convert WM_values to a list of lists
+        data = [[value] for value in values]
+        
+        # Plot box plots for each patient
+        fig, axs = plt.subplots(1, 1, figsize=(10, 12), sharex=True)
+        
+        axs.boxplot(data, labels=subjects)
+        axs.set_title('WM Values ')
+        axs.set_ylabel('WM Values')
+        axs.set_title(f'Box Plot for Each Patient using ({config}) Configurations')
+        plt.xlabel('Patient ID')
+        plt.show()
+
 
 class EM:
     def __init__(self, K=3, params_init_type='random', modality='multi', verbose=True):
