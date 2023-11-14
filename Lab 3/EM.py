@@ -69,7 +69,7 @@ class NiftiManager:
         '''Displays a single slice from the nifti volume (change the slice index as needed).'''
         plt.imshow(file_data[:, :, slice], cmap='gray')
         plt.title(title)
-        plt.colorbar()
+        # plt.colorbar()
         plt.show()
 
     def show_label_seg_nifti(self, label, seg, subject_id, slice=25):
