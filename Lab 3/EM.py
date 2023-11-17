@@ -70,6 +70,7 @@ class NiftiManager:
         plt.imshow(file_data[:, :, slice], cmap='gray')
         plt.title(title)
         # plt.colorbar()
+        plt.axis('off')
         plt.show()
 
     def show_label_seg_nifti(self, label, seg, subject_id, slice=25):
