@@ -1138,57 +1138,57 @@ class EM:
         assert np.isclose(np.sum(self.alpha_k), 1.0, atol=self.sum_tolerance), 'Error in self.alpha_k calculation in "initialize_parameters". Sum of all self.alpha_k elements has to be equal to 1.'
 
     def multivariate_gaussian_probability(self, x, mean_k, cov_k, regularization=1e-4):
-            '''
-            Compute the multivariate and single variate gaussian probability density function (PDF) for a given data data.
-            The function can handle single or multi-modality (dimensions) and computes the probability on all of the 
-            data without a complex iteratitve matrix multiplication.
-    
-            Args:
-                x ('numpy.ndarray'): The data points.
-                mean_k ('numpy.ndarray'): The mean vector for cluster K.
-                cov_k ('numpy.ndarray'): The covariance matrix for cluster K.
-    
-            Returns:
-                float: The probability density at the given data point.
-            '''
-    
-            dim = self.n_features
-            x_min_mean = x - mean_k.T # Nxd
+        '''
+        Compute the multivariate and single variate gaussian probability density function (PDF) for a given data data.
+        The function can handle single or multi-modality (dimensions) and computes the probability on all of the 
+        data without a complex iteratitve matrix multiplication.
+
+        Args:
+            x ('numpy.ndarray'): The data points.
+            mean_k ('numpy.ndarray'): The mean vector for cluster K.
+            cov_k ('numpy.ndarray'): The covariance matrix for cluster K.
+
+        Returns:
+            float: The probability density at the given data point.
+        '''
+
+        dim = self.n_features
+        x_min_mean = x - mean_k.T # Nxd
+        
+        if dim == 1 and cov_k.shape == (): # single modality
+
+            # to handle nan cov_k and inversion in certain cases (mainly when randomly initializing)     
+            # we add a small regularisation term to enable the inverse and not to have nan in the final
+            # matrix           
+            cov_k +=  regularization
             
-            if dim == 1 and cov_k.shape == (): # single modality
+            # the covariance matrix is a scalar value, thus the inverse is 1 / scalar value
+            inv_cov_k = 1 / cov_k
 
-                # to handle nan cov_k and inversion in certain cases (mainly when randomly initializing)     
-                # we add a small regularisation term to enable the inverse and not to have nan in the final
-                # matrix           
-                cov_k +=  regularization
-                
-                # the covariance matrix is a scalar value, thus the inverse is 1 / scalar value
-                inv_cov_k = 1 / cov_k
+            # to not change the multiplication formula below, we convert it to a (1,1) matrix
+            inv_cov_k = np.array([[inv_cov_k.copy()]])
+            
+            # the determinant is only used for square matrices, for a scalar value, det(a) = a
+            determinant = cov_k
 
-                # to not change the multiplication formula below, we convert it to a (1,1) matrix
-                inv_cov_k = np.array([[inv_cov_k.copy()]])
-                
-                # the determinant is only used for square matrices, for a scalar value, det(a) = a
-                determinant = cov_k
+        else: # multi-modality
 
-            else: # multi-modality
+            # to handle nan cov_k and inversion in certain cases (mainly when randomly initializing)     
+            # we add a small regularisation term to enable the inverse and not to have nan in the final
+            # matrix           
+            cov_k += np.eye(cov_k.shape[0]) * regularization
 
-                # to handle nan cov_k and inversion in certain cases (mainly when randomly initializing)     
-                # we add a small regularisation term to enable the inverse and not to have nan in the final
-                # matrix           
-                cov_k += np.eye(cov_k.shape[0]) * regularization
+            try:
+                inv_cov_k = np.linalg.inv(cov_k)
+            except np.linalg.LinAlgError:
+                inv_cov_k = np.linalg.pinv(cov_k) # Handle singularity by using the pseudo-inverse
 
-                try:
-                    inv_cov_k = np.linalg.inv(cov_k)
-                except np.linalg.LinAlgError:
-                    inv_cov_k = np.linalg.pinv(cov_k) # Handle singularity by using the pseudo-inverse
+            determinant = np.linalg.det(cov_k)
 
-                determinant = np.linalg.det(cov_k)
-    
-            exponent = -0.5 * np.sum((x_min_mean @ inv_cov_k) * x_min_mean, axis=1)
-            denominator = (2 * np.pi) ** (dim / 2) * np.sqrt(determinant)
-    
-            return (1 / denominator) * np.exp(exponent)
+        exponent = -0.5 * np.sum((x_min_mean @ inv_cov_k) * x_min_mean, axis=1)
+        denominator = (2 * np.pi) ** (dim / 2) * np.sqrt(determinant)
+
+        return (1 / denominator) * np.exp(exponent)
 
     def expectation(self):
         '''
