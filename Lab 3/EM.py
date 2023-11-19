@@ -1,3 +1,25 @@
+# =============================================================================
+# FILE: EM.py
+# DESCRIPTION: A Python file containing classes for image segmentation and 
+# evaluation using Expectation-Maximization Algorithm.
+# AUTHOR: [Abdelrahman Usama Habib]
+# DATE: [11/19/2023]
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# TABLE OF CONTENTS
+# -----------------------------------------------------------------------------
+# 1. Import Statements
+# 2. FileManager Class
+# 3. NiftiManager Class
+# 4. Evaluate Class
+# 5. ElastixTransformix Class
+# 6. BrainAtlasManager Class
+# 7. Plot Class
+# 8. EM Class
+# -----------------------------------------------------------------------------
+
+# 1. Import Statements
 import nibabel as nib
 import matplotlib.pyplot as plt
 import os
@@ -16,24 +38,64 @@ import pandas as pd
 from loguru import logger
 import pandas as pd
 
+# 2. FileManager Class
 class FileManager:
+    '''
+    A class for managing file-related operations, such as checking file existence, creating directories,
+    pretty-printing objects, and replacing text in files.
+
+    Methods:
+        - __init__(self) -> None: Initialize a PrettyPrinter for clear object printing.
+        - check_file_existence(self, file, description): Check if a file exists; raise a ValueError if not.
+        - create_directory_if_not_exists(self, path): Create a directory if it does not exist.
+        - pprint_objects(self, *arg): Print large and indented objects clearly.
+        - replace_text_in_file(self, file_path, search_text, replacement_text): Replace text in a text file.
+
+    Attributes:
+        - pp (pprint.PrettyPrinter): PrettyPrinter object for clear object printing.
+    '''
     def __init__(self) -> None:
+        # Initialize a PrettyPrinter for clear object printing
         self.pp = pprint.PrettyPrinter(indent=4)
 
     def check_file_existence(self, file, description):
+        '''
+        Check if a file exists; raise a ValueError if not.
+
+        Args:
+            file ('str'): File path.
+            description ('str'): Description of the file for the error message.
+        '''
         if file is None:
             raise ValueError(f"Please check if the {description} file passed exists in the specified directory")
         
     def create_directory_if_not_exists(self, path):
+        '''
+        Create a directory if it does not exist.
+
+        Args:
+            path ('str'): Directory path.
+        '''
         if not os.path.exists(path):
             os.makedirs(path)
 
     def pprint_objects(self, *arg):
-        '''Prints large and indented objects clearly.'''
+        '''
+        Print large and indented objects clearly.
+
+        Args:
+            *arg: Variable number of arguments to print.
+        '''
         self.pp.pprint(arg)
 
     def replace_text_in_file(self, file_path, search_text, replacement_text):
-        '''Function used to read a txt file, search for a given text, modify it, and save it in the same file.
+        '''
+        Replace text in a text file.
+
+        Args:
+            file_path ('str'): Path to the text file.
+            search_text ('str'): Text to search for in the file.
+            replacement_text ('str'): Text to replace the searched text with.
         '''
         try:
             # Read the file
@@ -53,20 +115,65 @@ class FileManager:
         # except Exception as e:
         #     print(f"An error occurred: {e}")
 
-
+# 3. NiftiManager Class
 class NiftiManager:
+    """
+    Manager class for handling NIfTI files, including loading, visualization, and export.
+
+    Methods:
+        - __init__(self) -> None: Initializes the NiftiManager.
+        - load_nifti(self, file_path) -> Tuple[np.array, nibabel.Nifti1Image]:
+            Load the NIfTI image and access the image data as a Numpy array.
+
+        - show_nifti(self, file_data, title, slice=25) -> None:
+            Display a single slice from the NIfTI volume.
+
+        - show_label_seg_nifti(self, label, seg, subject_id, slice=25) -> None:
+            Display both segmentation and ground truth labels for a specific slice.
+
+        - show_mean_volumes(self, mean_csf, mean_wm, mean_gm, slices=[128], export=False, filename=None) -> None:
+            Display mean volumes for CSF, WM, and GM for specified slices.
+
+        - show_combined_mean_volumes(self, mean_csf, mean_wm, mean_gm, slice_to_display=128, export=False, filename=None) -> None:
+            Display combined averaged volumes for CSF, WM, and GM at a specific slice.
+
+        - min_max_normalization(self, image, max_value) -> np.array:
+            Perform min-max normalization on an image.
+
+        - export_nifti(self, volume, export_path, nii_image=None) -> None:
+            Export NIfTI volume to a given path.
+
+    Attributes:
+        None
+    """
     def __init__(self) -> None:
         pass
 
     def load_nifti(self, file_path):
-        '''Loads the NIfTI image and access the image data as a Numpy array.'''
+        '''
+        Load the NIfTI image and access the image data as a Numpy array.
+
+        Args:
+            file_path ('str'): Path to the NIfTI file.
+
+        Returns:
+            data_array ('np.array'): Numpy array representing the image data.
+            nii_image: Loaded NIfTI image object.
+        '''
         nii_image = nib.load(file_path)
         data_array = nii_image.get_fdata()
 
         return data_array, nii_image
 
     def show_nifti(self, file_data, title, slice=25):
-        '''Displays a single slice from the nifti volume (change the slice index as needed).'''
+        '''
+        Display a single slice from the NIfTI volume.
+
+        Args:
+            file_data ('np.array'): Numpy array representing the image data.
+            title ('str'): Title for the plot.
+            slice ('int'): Slice index to display.
+        '''        
         plt.imshow(file_data[:, :, slice], cmap='gray')
         plt.title(title)
         # plt.colorbar()
@@ -74,7 +181,18 @@ class NiftiManager:
         plt.show()
 
     def show_label_seg_nifti(self, label, seg, subject_id, slice=25):
-        '''Displays both segmentation and ground truth labels as passed to the function.'''
+        '''
+        Display both segmentation and ground truth labels for a specific slice.
+
+        Args:
+            label ('np.array'): Ground truth label image.
+            seg ('np.array'): Segmentation label image.
+            subject_id ('str'): Identifier for the subject or image.
+            slice ('int'): Slice index to display.
+
+        Returns:
+            None
+        '''
         plt.figure(figsize=(20, 7))
         
         plt.subplot(1, 2, 1)
@@ -93,7 +211,20 @@ class NiftiManager:
         plt.show()
 
     def show_mean_volumes(self, mean_csf, mean_wm, mean_gm, slices=[128], export=False, filename=None):
-        '''Displays the mean volumes for CSF, WM, and GM for a list of slices.'''
+        '''
+        Display mean volumes for CSF, WM, and GM for specified slices.
+
+        Args:
+            mean_csf ('np.array'): Mean volume for CSF.
+            mean_wm ('np.array'): Mean volume for WM.
+            mean_gm ('np.array'): Mean volume for GM.
+            slices ('list'): List of slice indices to display.
+            export ('bool'): Whether to export the plot to a file.
+            filename ('str'): Filename for the exported plot.
+
+        Returns:
+            None
+        '''        
         num_slices = len(slices)
         
         plt.figure(figsize=(20, 7 * num_slices))
@@ -123,6 +254,20 @@ class NiftiManager:
         plt.show()
 
     def show_combined_mean_volumes(self, mean_csf, mean_wm, mean_gm, slice_to_display=128, export=False, filename=None):
+        '''
+        Display combined averaged volumes for CSF, WM, and GM at a specific slice.
+
+        Args:
+            mean_csf ('np.array'): Mean volume for CSF.
+            mean_wm ('np.array'): Mean volume for WM.
+            mean_gm ('np.array'): Mean volume for GM.
+            slice_to_display ('int'): Slice index to display.
+            export ('bool'): Whether to export the plot to a file.
+            filename ('str'): Filename for the exported plot.
+
+        Returns:
+            None
+        '''
         # Stack the mean volumes along the fourth axis to create a single 4D array
         combined_mean_volumes = np.stack((mean_csf, mean_wm, mean_gm), axis=3)
     
@@ -140,6 +285,16 @@ class NiftiManager:
         plt.show()
 
     def min_max_normalization(self, image, max_value):
+        '''
+        Perform min-max normalization on an image.
+
+        Args:
+            image ('np.array'): Input image to normalize.
+            max_value ('float'): Maximum value for normalization.
+
+        Returns:
+            normalized_image ('np.array'): Min-max normalized image.
+        '''
         # Ensure the image is a NumPy array for efficient calculations
         image = np.array(image)
         
@@ -152,24 +307,58 @@ class NiftiManager:
         
         return normalized_image
 
-    def export_nifti(self, volume, export_path, fdata=None):
-        '''Exports nifti volume to a given path.
+    def export_nifti(self, volume, export_path, nii_image=None):
         '''
-        
+        Export NIfTI volume to a given path.
+
+        Args:
+            volume ('np.array'): Numpy array representing the volume.
+            export_path ('str'): Path to export the NIfTI file.
+            nii_image ('nibabel'): Loaded NIfTI image object.
+
+        Returns:
+            None
+        '''
         # Create a NIfTI image from the NumPy array
         # np.eye(4): Identity affine transformation matrix, it essentially assumes that the images are in the same orientation and position 
         # as the original images
-        affine = fdata.affine if fdata else np.eye(4)
+        affine = nii_image.affine if nii_image else np.eye(4)
         img = nib.Nifti1Image(volume, affine)
 
         # Save the NIfTI image
         nib.save(img, str(export_path))
 
+# 4. Evaluate Class
 class Evaluate:
+    """
+    Class for evaluating segmentation performance using Dice coefficients.
+
+    Methods:
+        - __init__(self) -> None: Initializes the Evaluate class.
+
+        - calc_dice_coefficient(self, mask1, mask2) -> float:
+            Calculate the Dice coefficient between two binary masks.
+
+        - evaluate_dice_volumes(self, volume1, volume2, labels=None) -> dict:
+            Evaluate Dice coefficients for different tissue types.
+
+    Attributes:
+        None
+    """
     def __init__(self) -> None:
         pass
 
     def calc_dice_coefficient(self, mask1, mask2):
+        '''
+        Calculate the Dice coefficient between two binary masks.
+
+        Args:
+            mask1 ('np.array'): Binary mask.
+            mask2 ('np.array'): Binary mask.
+
+        Returns:
+            dice ('float'): Dice coefficient.
+        '''
         # Ensure the masks have the same shape
         if mask1.shape != mask2.shape:
             raise ValueError("Input masks must have the same shape.")
@@ -184,6 +373,17 @@ class Evaluate:
         return dice
     
     def evaluate_dice_volumes(self, volume1, volume2, labels=None):
+        '''
+        Evaluate Dice coefficients for different tissue types.
+
+        Args:
+            volume1 ('np.array'): Segmentation volume.
+            volume2 ('np.array'): Ground truth segmentation volume.
+            labels ('dict'): Dictionary mapping tissue types to labels.
+
+        Returns:
+            dice_coefficients ('dict'): Dictionary of Dice coefficients for each tissue type.
+        '''
         # Ensure the masks have the same shape
         if volume1.shape != volume2.shape:
             raise ValueError("Input masks must have the same shape.")
@@ -203,12 +403,40 @@ class Evaluate:
             # print(f"{tissue_label} DICE: {dice_coefficient}")
 
         return dice_coefficients
-            
+
+# 5. ElastixTransformix Class           
 class ElastixTransformix:
+    """
+    Class for performing image registration using elastix and label propagation using transformix.
+
+    Methods:
+        - __init__(self) -> None: Initializes the ElastixTransformix class.
+
+        - execute_cmd(self, command) -> str:
+            Execute a command and check for success.
+
+        - register_elastix(self, fixed_path, moving_path, reg_params, create_dir_callback, execute_cmd_callback, fMask=None) -> None:
+            Perform image registration using elastix.
+
+        - label_propagation_transformix(self, fixed_path, moving_path, input_label, transform_path, replace_text_in_file_callback, create_dir_callback, execute_cmd_callback) -> None:
+            Apply label propagation using transformix.
+
+    Attributes:
+        None
+    """
     def __init__(self) -> None:
         pass
 
     def excute_cmd(self, command):
+        '''
+        Execute a command and check for success.
+
+        Args:
+            command ('str'): Command to execute.
+        
+        Returns:
+            result ('str'): Output of the command if successful.
+        '''
         # excute the command
         result = subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, shell=True)
 
@@ -230,7 +458,20 @@ class ElastixTransformix:
                         create_dir_callback, 
                         excute_cmd_callback,
                         fMask = None):
+        '''
+        Perform image registration using elastix.
 
+        Args:
+            fixed_path ('str'): Path to the fixed image.
+            moving_path ('str'): Path to the moving image.
+            reg_params ('str'): Registration parameters for elastix.
+            create_dir_callback ('function'): Callback function to create directories.
+            excute_cmd_callback ('function'): Callback function to execute commands.
+            fMask ('str'): Optional path to a mask file.
+
+        Returns:
+            None
+        '''
         # Get the names of the fixed and moving images for the output directory, names without the file extensions
         reg_fixed_name  = fixed_path.replace("\\", "/").split("/")[-1].split(".")[0] # \\
         reg_moving_name = moving_path.replace("\\", "/").split("/")[-1].split(".")[0]
@@ -255,7 +496,21 @@ class ElastixTransformix:
         replace_text_in_file_callback, 
         create_dir_callback, 
         excute_cmd_callback):
-        
+        '''
+        Apply label propagation using transformix.
+
+        Args:
+            fixed_path ('str'): Path to the fixed image.
+            moving_path ('str'): Path to the moving image.
+            input_label ('str'): Path to the input label image.
+            transform_path ('str'): Path to the transformation parameters.
+            replace_text_in_file_callback ('function'): Callback function to replace text in a file.
+            create_dir_callback ('function'): Callback function to create directories.
+            excute_cmd_callback ('function'): Callback function to execute commands.
+
+        Returns:
+            None
+        '''
         replace_text_in_file_callback(
             transform_path, 
             search_text = '(FinalBSplineInterpolationOrder 3)', 
@@ -277,7 +532,26 @@ class ElastixTransformix:
         # run transformix on all combinations
         excute_cmd_callback(command_line)
     
+# 6. BrainAtlasManager Class
 class BrainAtlasManager:
+    """
+    Class for managing brain atlases and performing segmentation using tissue models and label propagation.
+
+    Methods:
+        - __init__(self) -> None: Initializes the BrainAtlasManager class.
+
+        - segment_using_tissue_models(self, image, label, tissue_map_csv) -> Tuple[np.array, np.array]:
+            Segmentation using intensity information and tissue models.
+
+        - segment_using_tissue_atlas(self, image, label, *atlases) -> Tuple[np.array, np.array]:
+            Segmentation using position information and atlases.
+
+        - segment_using_tissue_models_and_atlas(self, image, label, tissue_map_csv, *atlases) -> Tuple[np.array, np.array]:
+            Segmentation using both intensity and position information.
+
+    Attributes:
+        None
+    """
     def __init__(self) -> None:
         pass
 
@@ -477,7 +751,23 @@ class BrainAtlasManager:
 
         return segmented_image, posteriors
 
+# 7. Plot Class
 class Plot:
+    """
+    Class for generating and displaying box plots.
+
+    Methods:
+        - __init__(self) -> None: Initializes the Plot class.
+
+        - plot_boxplot_per_tissue(self, WM_values, GM_values, CSF_values, config) -> None:
+            Plots a box plot for each tissue type based on the provided data.
+
+        - plot_boxplot_per_patient(self, values, subjects, config) -> None:
+            Plots a box plot for each subject separately.
+
+    Attributes:
+        None
+    """
     def __init__(self) -> None:
         pass
 
@@ -486,13 +776,13 @@ class Plot:
         Plots a box plot for each tissue type based on the provided data.
 
         Args:
-        - WM_values ('list'): List of white matter values for each patient.
-        - GM_values ('list'): List of gray matter values for each patient.
-        - CSF_values ('list'): List of cerebrospinal fluid values for each patient.
-        - config (str): Configuration information to include in the plot title.
+            WM_values ('list'): List of white matter values for each patient.
+            GM_values ('list'): List of gray matter values for each patient.
+            CSF_values ('list'): List of cerebrospinal fluid values for each patient.
+            config ('str'): Configuration information to include in the plot title.
 
         Returns:
-        None. The function generates and displays the box plot.
+            None. The function generates and displays the box plot.
         """
 
         # Calculate quartiles and IQR for each tissue type
@@ -525,11 +815,8 @@ class Plot:
         Plots a boxplot for each subject separately.
 
         Args:
-            values ('list'):
-                A 1D list Contains the values to be plotted.
-
-            subjects ('list'):
-                A 1D list, same length as 'values' for the x-axis of the plot.
+            values ('list'): A 1D list Contains the values to be plotted.
+            subjects ('list'): A 1D list, same length as 'values' for the x-axis of the plot.
 
         Returns:
             None. The function generates and displays the box plot.
@@ -548,9 +835,66 @@ class Plot:
         plt.xlabel('Patient ID')
         plt.show()
 
-
+# 8. EM Class
 class EM:
+    """
+    Implementation of the Expectation-Maximization (EM) algorithm for image segmentation.
+
+    Methods:
+        - __init__(K=3, params_init_type='random', modality='multi', verbose=True): Initializes the EM algorithm.
+        - initialize_for_fit(labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, include_atlas, *atlases): Initializes variables for fitting.
+        - skull_stripping(image, label): Performs skull stripping and returns the volume with labeled tissues only.
+        - get_tissue_data(labels_gt_file, t1_path, t2_path): Removes black background from skull-stripped volume.
+        - initialize_parameters(data, tissue_model_csv_dir, *atlases): Initializes model parameters.
+        - multivariate_gaussian_probability(x, mean_k, cov_k, regularization=1e-4): Computes multivariate Gaussian probability.
+        - expectation(): Expectation step of the EM algorithm.
+        - maximization(w_ik, tissue_data): Maximization step of the EM algorithm.
+        - log_likelihood(alpha, clusters_means, clusters_covar, multivariate_gaussian_probability_callback): Computes log-likelihood.
+        - generate_segmentation(posteriors, gt_binary): Generates segmentation based on posterior probabilities.
+        - correct_pred_labels(segmentation_result, gt_binary): Corrects predicted labels based on prior knowledge.
+        - fit(n_iterations, labels_gt_file, t1_path, t2_path=None, correct_labels=True, tissue_model_csv_dir=None, atlas_csf=None, atlas_wm=None, atlas_gm=None, include_atlas=False): Fits the EM algorithm and segments the volume.
+
+    Attributes:
+        - K ('int'): Number of clusters/components.
+        - params_init_type ('str'): Type of initialization for parameters ('kmeans', 'random', 'tissue_models', 'atlas', 'tissue_models_atlas').
+        - modality ('str'): Modality of the input data ('multi' or 'single').
+        - verbose ('bool'): Whether to print verbose output.
+        - labels_gt_file ('str'): Ground truth labels file path.
+        - t1_path ('str'): Path to the T1-weighted image.
+        - t2_path ('str'): Path to the T2-weighted image.
+        - sum_tolerance ('float'): Tolerance for sum conditions.
+        - convergence_tolerance ('int'): Tolerance for convergence check.
+        - seed ('int'): Seed for random initialization.
+        - NM ('NiftiManager'): Nifti file manager class.
+        - FM ('FileManager'): File manager class.
+        - BrainAtlas ('BrainAtlasManager'): Brain atlas manager.
+        - tissue_data ('np.array'): 2D array of voxel intensities for selected tissues.
+        - gt_binary ('np.array'): Binary mask indicating selected tissues.
+        - img_shape ('tuple'): Shape of the T1-weighted image volume.
+        - n_samples ('int'): Number of samples.
+        - n_features ('int'): Number of features.
+        - clusters_means ('np.array'): Cluster means.
+        - clusters_covar ('np.array'): Cluster covariance matrices.
+        - alpha_k ('np.array'): Prior probabilities.
+        - posteriors ('np.array'): Normalized posterior probabilities.
+        - pred_labels ('np.array'): Predicted labels.
+        - loglikelihood ('list'): List to store log-likelihood values.
+        - atlas_prob ('np.array'): Atlas probabilities.
+        - include_atlas ('bool'): Whether to include atlas information in the initialization.
+    """
     def __init__(self, K=3, params_init_type='random', modality='multi', verbose=True):
+        '''
+        Initialize the Expectation-Maximization (EM) algorithm for image segmentation.
+
+        Args:
+            K ('int'): Number of clusters/components.
+            params_init_type ('str'): Type of initialization for parameters ('kmeans', 'random', 'tissue_models', 'atlas', 'tissue_models_atlas').
+            modality ('str'): Modality of the input data ('multi' or 'single').
+            verbose (bool): Whether to print verbose output.
+
+        Returns:
+            None
+        '''
         self.K                  = K
         self.params_init_type   = params_init_type
         self.modality           = modality
@@ -591,8 +935,20 @@ class EM:
         self.include_atlas  = None
 
     def initialize_for_fit(self, labels_gt_file, t1_path, t2_path, tissue_model_csv_dir, include_atlas, *atlases):
-        '''Initialize variables only when fitting the algorithm.'''
-                
+        '''
+        Initialize variables only when fitting the algorithm.
+
+        Args:
+            labels_gt_file ('path'): Ground truth labels file path.
+            t1_path ('str'): Path to the T1-weighted image.
+            t2_path ('str'): Path to the T2-weighted image.
+            tissue_model_csv_dir ('str'): Directory containing tissue model CSV files.
+            include_atlas ('bool'): Whether to include atlas information in the initialization.
+            *atlases: Variable number of atlas objects.
+
+        Returns:
+            None
+        '''                
         # get the atlases
         atlas_csf = atlases[0]
         atlas_wm  = atlases[1]
@@ -662,9 +1018,19 @@ class EM:
         return np.multiply(image, labels_mask)
     
     def get_tissue_data(self, labels_gt_file, t1_path, t2_path):
-        '''Removes the black background from the skull stripped volume and returns a 1D array of the voxel intensities \
-            of the pixels that falls in the True region of the mask, for GM, WM, and CSF.'''
-        
+        '''
+        Remove the black background from the skull-stripped volume and return a 1D array of voxel intensities.
+
+        Args:
+            labels_gt_file ('str'): Ground truth labels file path.
+            t1_path ('str'): Path to the T1-weighted image.
+            t2_path ('str'): Path to the T2-weighted image.
+
+        Returns:
+            tissue_data ('np.array'): A 2D array of voxel intensities for selected tissues.
+            labels_mask ('np.array'): Binary mask indicating the selected tissues.
+            img_shape ('tuple'): Shape of the T1-weighted image volume.
+        '''        
         # Check if files passed
         self.FM.check_file_existence(labels_gt_file, "labels")
         self.FM.check_file_existence(t1_path, "T1")
@@ -707,10 +1073,12 @@ class EM:
 
         Args:
             data ('numpy.ndarray'): The intensity image (tissue data) in its original shape.
-            - tissue_map_csv_dir (str): path to the tissue model csv file.
+            - tissue_map_csv_dir ('str'): path to the tissue model csv file.
+
+        Returns:
+            None
 
         '''
-
         if self.params_init_type not in ['kmeans', 'random', 'tissue_models', 'atlas', 'tissue_models_atlas']:
             raise ValueError(f"Invalid initialization type {self.params_init_type}. Both 'random' and 'kmeans' initializations are available.")
 
@@ -823,10 +1191,15 @@ class EM:
             return (1 / denominator) * np.exp(exponent)
 
     def expectation(self):
-        '''Expectation step of EM algorithm. The function initializes the probability placeholder on every iteration, then computes \ 
-        the cluster multivariate gaussian probability for every cluster. The final normalised posterior probabilities are normalised \ 
-        to ensure the sum of every voxel probabilities for the three clusters is equal to 1.'''
+        '''
+        Expectation step of the EM algorithm.
 
+        The function initializes the probability placeholder on every iteration, then computes the cluster multivariate gaussian probability for every cluster.
+        The final normalized posterior probabilities are normalized to ensure the sum of every voxel probabilities for the three clusters is equal to 1.
+
+        Returns:
+            posteriors ('np.array'): Normalized posterior probabilities.
+        '''
         # initialize membership weights probabilities
         # has to be reset to empty placeholder in every iteration to avoid accumulating the values, the assert below will validate
         posteriors     = np.zeros((self.n_samples, self.K), dtype=np.float64) # posterior probabilities, (456532, 3)
@@ -857,8 +1230,20 @@ class EM:
         return posteriors
     
     def maximization(self, w_ik, tissue_data):
-        '''Maximization M-Step of EM algorithm. The function updates the model parameters (mean and covariance matrix) as well as updates the \
-            weights (alphas) for every cluster.'''
+        '''
+        Maximization M-Step of EM algorithm.
+
+        The function updates the model parameters (mean and covariance matrix) as well as updates the weights (alphas) for every cluster.
+
+        Args:
+            w_ik ('np.array'): Membership weights.
+            tissue_data ('np.array'): Tissue data array.
+
+        Returns:
+            alpha_k ('np.array'): Updated alpha priors.
+            mu_k ('np.array'): Updated cluster means.
+            covariance_matrix ('np.array'): Updated covariance matrices.
+        '''
 
         # Computing the new means and covariance matrix
         covariance_matrix = np.zeros(((self.K, self.n_features, self.n_features)))
@@ -886,6 +1271,19 @@ class EM:
         return alpha_k, mu_k, covariance_matrix
     
     def log_likelihood(self, alpha, clusters_means, clusters_covar, multivariate_gaussian_probability_callback):
+        '''
+        Compute the log-likelihood of the EM algorithm.
+
+        Args:
+            alpha ('np.array'): Prior probabilities.
+            clusters_means ('np.array'): Cluster means.
+            clusters_covar ('np.array'): Cluster covariance matrices.
+            multivariate_gaussian_probability_callback ('function'): Callback function for multivariate gaussian probability computation.
+
+        Returns:
+            float: Log-likelihood value.
+        '''
+        
         return np.sum(
                     np.log(
                         np.sum(
@@ -897,6 +1295,16 @@ class EM:
                     )
 
     def generate_segmentation(self, posteriors, gt_binary):
+        '''
+        Generate segmentation based on posterior probabilities.
+
+        Args:
+            posteriors ('np.array'): Normalized posterior probabilities.
+            gt_binary ('np.array'): Binary ground truth volume.
+
+        Returns:
+            np.array: Segmentation result.
+        '''
         predictions = np.argmax(posteriors, axis=1) + 1
         gt = gt_binary
         gt[gt == 1] = predictions
@@ -904,12 +1312,12 @@ class EM:
         return gt.reshape(self.img_shape)
     
     def correct_pred_labels(self, segmentation_result, gt_binary):
-        '''Maps the pixel values of the prediction volume that matches the prediction labels to the gt labels values. This is based on prior knowledge 
-        of the correct labl for each cluster, known from a ground truth label volume.
+        '''
+        Correct the predicted labels based on prior knowledge.
         
         Args:
-            segmentation_result (np.array): segmentation volume resulted from the algorithm
-            gt_binary (np.array): binarized ans flattened volume for the segmented volume, the label/ground truth.
+            segmentation_result ('np.array'): segmentation volume resulted from the algorithm
+            gt_binary ('np.array'): binarized ans flattened volume for the segmented volume, the label/ground truth.
 
         Returns:
             corrected_segmentation (np.array): segmentation volume with the corrected label for each cluster.
@@ -959,7 +1367,24 @@ class EM:
             atlas_gm= None,
             include_atlas = False
             ):
-        '''Main function that fits the EM algorithm'''
+        '''
+        Main function that fits the EM algorithm and segments the given volume.
+
+        Args:
+            n_iterations ('int'): Number of iterations for the EM algorithm.
+            labels_gt_file ('str'): Ground truth labels file path.
+            t1_path ('str'): Path to the T1-weighted image.
+            t2_path ('str', optional): Path to the T2-weighted image.
+            correct_labels ('bool'): Whether to correct the predicted labels.
+            tissue_model_csv_dir ('str'): Directory containing tissue model CSV files.
+            atlas_csf ('nibabel'): Loaded NIfTI for CSF.
+            atlas_wm ('nibabel'): Loaded NIfTI for WM.
+            atlas_gm ('nibabel'): Loaded NIfTI for GM.
+            include_atlas ('bool'): Whether to include atlas information in the initialization.
+
+        Returns:
+            np.array: Segmentation result.
+        '''
 
         if self.verbose: logger.info(f"Starting the algorithm. {n_iterations} iterations were initialized.")
 
